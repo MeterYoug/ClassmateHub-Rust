@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": { "installer/LICENSE-MIT": "LICENSE-TAURI-NSIS" },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": { "type": "offlineInstaller" },
+      "nsis": {
+        "template": "installer/installer.nsi",
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"]
+      }
+    }
+  }
+}

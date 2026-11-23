@@ -1,0 +1,17 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.env*
+!.env.example
+!.env.*.example
+*.db
+*.db-*
+*.bak.db
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.agents/
+.codex/
+.tmp/

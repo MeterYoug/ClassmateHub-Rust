@@ -1,0 +1,13 @@
+{
+  "productName": "classmatehub",
+  "bundle": {
+    "targets": ["deb"],
+    "linux": {
+      "deb": {
+        "section": "education",
+        "depends": ["libssl3t64"],
+        "files": { "/usr/share/doc/classmatehub/copyright": "../LICENSE" }
+      }
+    }
+  }
+}

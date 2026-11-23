@@ -1,0 +1,38 @@
+{
+  "name": "classmatehub-rust",
+  "version": "0.1.8",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MeterYoug/ClassmateHub-Rust.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/MeterYoug/ClassmateHub-Rust/issues"
+  },
+  "homepage": "https://github.com/MeterYoug/ClassmateHub-Rust#readme",
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-fs": "^2.7.1",
+    "element-plus": "^2.14.8",
+    "jspdf": "^4.2.1",
+    "vue": "^3.5.45",
+    "vue-router": "^5.5.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.5",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "vite": "^8.3.8"
+  },
+  "packageManager": "pnpm@11.9.0+sha512.bd682d5d03fe525ef7c9fd6780c6884d1e756ac4c9c9fe00c538782824310dcf90e3ddc4f53835f06dfaebd5085e41855e0bcbb3b60de2ac5bbab89e5036f03b"
+}
