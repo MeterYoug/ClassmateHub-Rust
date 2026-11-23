@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-第六阶段安装与发布准备进行中。已采用 MIT，首批包型为 Windows 11 x64 NSIS、Apple Silicon DMG 和 Ubuntu 24.04 LTS x64 DEB，MSI 暂缓。`0.1.9` 的三端候选包已从同一提交构建并通过文件校验，制品位于私有 GitHub Actions。此前 Windows 测试包已完成隔离安装、升级、重装、恢复、安装版座位表导出和已保存测试凭据的连接验收。`0.1.9` 实机安装与升级、无 WebView2 的 Windows 断网安装、签名、公证和公开发布仍待完成。产品边界与技术设计见 [项目总览](docs/project-overview.md)。
+第六阶段安装与发布准备进行中。已采用 MIT，首批包型为 Windows 11 x64 NSIS、Apple Silicon DMG 和 Ubuntu 24.04 LTS x64 DEB，MSI 暂缓。已发布 [`0.1.9` 三端公开测试版](https://github.com/MeterYoug/ClassmateHub-Releases/releases/tag/v0.1.9) 。此前 Windows 测试包已完成隔离安装、升级、重装、恢复、安装版座位表导出和已保存测试凭据的连接验收。`0.1.9` 实机安装与升级、无 WebView2 的 Windows 断网安装、正式签名、公证和正式版发布仍待完成。产品边界与技术设计见 [项目总览](docs/project-overview.md)。
 
 ## 待办与阶段验收
 
@@ -16,6 +16,12 @@
 - 确认是否需要旧业务表格兼容。如有需求，先核对脱敏样本。
 - AI 已验证本机兼容接入点，商业服务的实际接入仍待验证。
 - 发布前确认签名主体、公证条件、可追溯的源码基线、版本及发布渠道，按各正式包复核第三方归属声明。
+
+## 2026-11-23 11:06 发布班伴 0.1.9 三端公开测试版
+
+- 在独立的 [ClassmateHub-Releases](https://github.com/MeterYoug/ClassmateHub-Releases) 仓库发布 `v0.1.9`。安装包来自源码提交 `6a2e9c0`。同时上传更新清单、SHA-256 校验文件和三端第三方许可材料。
+- 草稿中六个文件的字节数和 GitHub 记录的 SHA-256 均与本地一致。发布后确认匿名 Releases API 和 `latest.json` 返回 `0.1.9`，三个安装包的匿名范围请求均返回 HTTP 206。
+- 项目 README、发布仓库 README 与 Release 说明已标明 macOS 和 Linux 尚未进行实机安装、运行及升级测试，两端已通过自动化测试和打包。
 
 ## 2026-11-23 10:52 验证 0.1.9 三端候选包
 

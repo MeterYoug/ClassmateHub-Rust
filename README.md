@@ -4,6 +4,10 @@
 
 当前提供基础资料、新学期复制、考试与成绩管理、离线排座、方案历史、座位表导出、整库备份恢复及可选 AI 排座。GitHub Actions 已验证 Windows 11 x64 NSIS、Apple Silicon DMG 和 Ubuntu 24.04 LTS x64 DEB 候选包的构建。
 
+[下载 v0.1.9 公开测试版](https://github.com/MeterYoug/ClassmateHub-Releases/releases/tag/v0.1.9)
+
+**测试状态**　macOS 和 Linux 尚未进行实机安装、运行及升级测试。两个平台的 GitHub Actions 自动化测试和打包均已通过。
+
 从 `0.1.2` 起，在同一个 Windows 账户中升级时，先关闭班伴，再运行新版 NSIS 安装包。向导默认选中「覆盖升级（保留本地数据）」并沿用原安装目录。
 
 工作台显示选中班级的资料准备情况，可直接打开学生导入、成绩管理和排座。顶部栏提供跨页共享的当前班级选择器，左侧导航可进入基础资料、考试与成绩、离线排座、备份与恢复、AI 设置及关于与更新。在「基础资料」可筛选、抽屉编辑和批量停用记录，表格在窄窗口下固定关键列与操作列。班级、学生、教室和规则资料可导出为 Excel。
@@ -36,7 +40,7 @@
 
 在「关于与更新」可查看当前版本号、运行架构、数据库结构版本、本地数据目录路径与 MIT 许可信息。自 `0.1.9` 起，点击「检查更新」会查询 `ClassmateHub-Releases` 的 GitHub Releases，兼容 `latest.json` 清单与 Releases 接口。请求仅在主动检查时发出，不发送本地业务或学生数据。发现新版本时可下载安装包，再运行安装程序覆盖升级。
 
-「关于与更新 → 高级选项」支持填写自定义 HTTPS 清单地址。`0.1.8` 用户可在首个公开版本上线后填入 `https://github.com/MeterYoug/ClassmateHub-Releases/releases/latest/download/latest.json` 。
+「关于与更新 → 高级选项」支持填写自定义 HTTPS 清单地址。`0.1.8` 用户可填入 `https://github.com/MeterYoug/ClassmateHub-Releases/releases/latest/download/latest.json` 后检查更新。
 
 ## 本地开发
 
