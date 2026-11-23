@@ -44,7 +44,7 @@
 
 ## 本地开发
 
-准备 Node.js、npm、Rust 工具链。Windows 还需要 Visual Studio C++ 构建工具及 WebView2 Runtime。各目标的打包选项见项目总览，已验证的工具版本和环境见路线图。
+准备 Node.js、npm、Rust 工具链。Windows 还需要 Visual Studio C++ 构建工具及 WebView2 Runtime。各目标的打包选项见项目总览。
 
 ```powershell
 npm ci
@@ -56,4 +56,3 @@ npm run tauri dev
 项目代码采用 MIT 许可证。 [许可证](LICENSE)
 
 - [项目总览与技术设计](docs/project-overview.md)
-- [实施路线与验收进度](ROADMAP.md)
