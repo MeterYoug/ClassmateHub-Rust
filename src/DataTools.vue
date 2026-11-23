@@ -523,7 +523,7 @@ onMounted(() =>
             <div>
               <div class="about-title-line">
                 <h2>{{ about?.product_title || '班伴 ClassmateHub' }}</h2>
-                <ElTag type="success" effect="dark">v{{ about?.version || '0.1.8' }}</ElTag>
+                <ElTag v-if="about?.version" type="success" effect="dark">v{{ about.version }}</ElTag>
                 <ElTag type="info" effect="plain">{{ about?.license || 'MIT' }} 许可证</ElTag>
               </div>
               <p class="form-hint">
@@ -577,13 +577,14 @@ onMounted(() =>
             </div>
           </div>
           <div class="meta-item full-span">
-            <span class="meta-label">开源代码仓库（GitHub）</span>
+            <span class="meta-label">安装包发布仓库（GitHub）</span>
             <div class="path-copy-row">
-              <code>{{ about?.repository_url || 'https://github.com/MeterYoug/ClassmateHub-Rust' }}</code>
+              <code>{{ about?.repository_url || '读取中…' }}</code>
               <ElButton
                 size="small"
                 :icon="CopyDocument"
-                @click="copyText(about?.repository_url || 'https://github.com/MeterYoug/ClassmateHub-Rust', '仓库地址')"
+                :disabled="!about?.repository_url"
+                @click="copyText(about.repository_url, '发布仓库地址')"
               >
                 复制仓库地址
               </ElButton>
@@ -679,7 +680,7 @@ onMounted(() =>
                   v-model="customUpdateUrl"
                   clearable
                   :disabled="busy"
-                  :placeholder="about?.default_manifest_url || 'https://github.com/MeterYoug/ClassmateHub-Rust/releases/latest/download/latest.json'"
+                  :placeholder="about?.default_manifest_url"
                 />
                 <ElButton :loading="busy" @click="checkUpdate">用此地址检查</ElButton>
               </div>

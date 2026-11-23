@@ -5,12 +5,12 @@ use serde_json::Value;
 use std::{io::Write, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
-const REPO_URL: &str = "https://github.com/MeterYoug/ClassmateHub-Rust";
-const RELEASES_URL: &str = "https://github.com/MeterYoug/ClassmateHub-Rust/releases";
+const REPO_URL: &str = "https://github.com/MeterYoug/ClassmateHub-Releases";
+const RELEASES_URL: &str = "https://github.com/MeterYoug/ClassmateHub-Releases/releases";
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/MeterYoug/ClassmateHub-Rust/releases/latest/download/latest.json";
+    "https://github.com/MeterYoug/ClassmateHub-Releases/releases/latest/download/latest.json";
 const DEFAULT_RELEASE_API_URL: &str =
-    "https://api.github.com/repos/MeterYoug/ClassmateHub-Rust/releases/latest";
+    "https://api.github.com/repos/MeterYoug/ClassmateHub-Releases/releases/latest";
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_ASSET_BYTES: usize = 600 * 1024 * 1024;
 
@@ -549,8 +549,13 @@ mod tests {
             "pub_date": "2026-11-20T08:30:00Z",
             "platforms": {
                 "windows-x86_64": {
-                    "url": "https://github.com/MeterYoug/ClassmateHub-Rust/releases/download/v0.2.0/班伴_0.2.0_x64-setup.exe",
-                    "signature": "sig"
+                    "url": format!("{RELEASES_URL}/download/v0.2.0/ClassmateHub_0.2.0_windows-x86_64-setup.exe")
+                },
+                "darwin-aarch64": {
+                    "url": format!("{RELEASES_URL}/download/v0.2.0/ClassmateHub_0.2.0_darwin-aarch64.dmg")
+                },
+                "linux-x86_64": {
+                    "url": format!("{RELEASES_URL}/download/v0.2.0/ClassmateHub_0.2.0_linux-x86_64.deb")
                 }
             }
         });
@@ -563,6 +568,13 @@ mod tests {
             parsed.notes.as_deref(),
             Some("1. 新增关于与在线更新\n2. 优化排座空位")
         );
+        let expected_asset = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("windows", "x86_64") => Some("ClassmateHub_0.2.0_windows-x86_64-setup.exe"),
+            ("macos", "aarch64") => Some("ClassmateHub_0.2.0_darwin-aarch64.dmg"),
+            ("linux", "x86_64") => Some("ClassmateHub_0.2.0_linux-x86_64.deb"),
+            _ => None,
+        };
+        assert_eq!(parsed.asset_name.as_deref(), expected_asset);
 
         let gh_release = json!({
             "tag_name": "v0.1.8",

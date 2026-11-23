@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-第六阶段安装与发布准备进行中。已采用 MIT，首批包型为 Windows 11 x64 NSIS、Apple Silicon DMG 和 Ubuntu 24.04 LTS x64 DEB，MSI 暂缓。此前 Windows 测试包已完成隔离安装、升级、重装、恢复、安装版座位表导出和已保存测试凭据的连接验收。最新版 Windows x64 未签名测试包为 `0.1.8`（新增「关于与更新」页面，支持直连 GitHub Releases 检查更新、应用内下载新版安装包与自定义 HTTPS 更新源），已完成构建与 SHA-256 校验，待实机安装与覆盖升级验收。无 WebView2 的 Windows 断网安装与 macOS、Ubuntu 的构建和桌面验收待完成。产品边界与技术设计见 [项目总览](docs/project-overview.md)。
+第六阶段安装与发布准备进行中。已采用 MIT，首批包型为 Windows 11 x64 NSIS、Apple Silicon DMG 和 Ubuntu 24.04 LTS x64 DEB，MSI 暂缓。此前 Windows 测试包已完成隔离安装、升级、重装、恢复、安装版座位表导出和已保存测试凭据的连接验收。`0.1.9` 已切换到独立的安装包发布仓库，候选包构建和验收进行中。无 WebView2 的 Windows 断网安装及 macOS、Ubuntu 的桌面验收待完成。产品边界与技术设计见 [项目总览](docs/project-overview.md)。
 
 ## 待办与阶段验收
 
@@ -16,6 +16,12 @@
 - 确认是否需要旧业务表格兼容。如有需求，先核对脱敏样本。
 - AI 已验证本机兼容接入点，商业服务的实际接入仍待验证。
 - 发布前确认签名主体、公证条件、可追溯的源码基线、版本及发布渠道，按各正式包复核第三方归属声明。
+
+## 2026-11-23 10:23 准备 0.1.9 三端发布构建
+
+- 将 npm、Cargo 及锁文件升至 `0.1.9`，默认更新地址切换到独立的 `MeterYoug/ClassmateHub-Releases` 仓库。已安装 `0.1.8` 的用户可在高级选项填写新仓库的 HTTPS 清单地址。
+- 新增手动触发的三端 GitHub Actions 工作流与制品整理脚本。三端构建与 Rust 测试通过后汇集安装包、`latest.json` 和 `SHA256SUMS.txt`，作为私有工作流制品。
+- 本机前端构建、43 项 Rust 测试和工作流 actionlint 检查通过。用合成的三端包验证下载地址、安装包校验和与错误输入处理。三端远程构建和安装验收待完成。
 
 ## 2026-11-20 16:31 新增关于与 GitHub Releases 在线更新检查并打包 Windows x64 0.1.8
 

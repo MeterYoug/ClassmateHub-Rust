@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "classmatehub"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "calamine",
  "reqwest 0.12.28",
