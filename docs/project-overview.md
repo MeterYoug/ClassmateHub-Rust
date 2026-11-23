@@ -87,7 +87,7 @@ AI 只提交临时编号的分配建议。应用校验完整性、编号、座�
 | Apple Silicon，macOS 15.0 起 | `.dmg`，启用 Hardened Runtime。 | `aarch64-apple-darwin` |
 | Ubuntu 24.04 LTS x64 | `.deb`，包名为 `classmatehub`，依赖 WebKitGTK、GTK 3 和 OpenSSL 3。 | `x86_64-unknown-linux-gnu` |
 
-在对应系统准备 [Tauri 构建依赖](https://v2.tauri.app/start/prerequisites/) 并运行 `npm ci`。Ubuntu 还需 `libssl-dev`。用下列命令构建未签名候选包，将 `<target>` 替换为表中的目标。输出位于 `src-tauri/target/<target>/release/bundle/`。Windows 命令已实跑，macOS 和 Ubuntu 的构建和安装仍需实测。
+在对应系统准备 [Tauri 构建依赖](https://v2.tauri.app/start/prerequisites/) 并运行 `npm ci`。Ubuntu 还需 `libssl-dev`。用下列命令构建未签名候选包，将 `<target>` 替换为表中的目标。输出位于 `src-tauri/target/<target>/release/bundle/`。三端命令已在对应的 GitHub Actions 运行器验证。
 
 ```text
 node node_modules/@tauri-apps/cli/tauri.js build --target <target> --no-sign --ci -- --locked
@@ -95,7 +95,7 @@ node node_modules/@tauri-apps/cli/tauri.js build --target <target> --no-sign --c
 
 私有源码仓库的 [Build release candidates](../.github/workflows/build-release.yml) 工作流由维护者手动运行。同一次运行从同一提交构建并测试 Windows 11 x64、macOS Apple Silicon 和 Ubuntu 24.04 LTS x64，成功后将三个安装包、`latest.json` 和 `SHA256SUMS.txt` 汇集到 Actions 的 `release-candidate` 制品。清单的下载地址指向 `ClassmateHub-Releases` 对应版本的 Release。最终签名文件若与构建制品不同，发布前须按实际分发文件重新计算 SHA-256。
 
-- 源码与安装包分开托管。默认更新源使用 `MeterYoug/ClassmateHub-Releases`，只在用户主动检查时访问 GitHub；公开 Release 只分发安装包、清单和校验文件。
+- 源码与安装包分开托管。默认更新源使用 `MeterYoug/ClassmateHub-Releases`，只在用户主动检查时访问 GitHub。公开 Release 用于分发安装包、清单和校验文件。
 - 安装文件与用户数据分开。应用标识为 `com.classmatehub.desktop`，升级沿用原标识与安装范围。Windows 的用户数据目录为 `%APPDATA%\com.classmatehub.desktop`，默认卸载保留数据。WebView2 已存在的 Windows 11 24H2 x64 环境已验证隔离版安装、升级和重装。未预装 WebView2 的断网安装仍待实测。
 - Windows 在检测到旧版 NSIS 安装时默认选中覆盖升级。`src-tauri/installer/installer.nsi` 基于 `tauri-bundler` 2.10.5 模板，定制升级提示与默认选项。升级 Tauri CLI 时应对照新版模板检查这些改动，模板许可随 Windows 包分发。 [上游 NSIS 模板](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.5/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi)
 - 升级前通过「备份与恢复」导出 `.classmatehub-backup`。备份恢复中断时，应用会在启动时尝试回退到恢复前快照。发布时如引入数据库迁移，还要验证迁移失败回滚，以及旧版无法读取新结构时使用旧版和兼容备份恢复。跨设备迁移后需重新配置 AI 接入点和凭据。
