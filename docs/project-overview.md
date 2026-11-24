@@ -6,7 +6,7 @@
 
 重构承接的是原排座项目的**业务需求和可验证行为**，不是原工程。桌面端新建数据模型、界面和命令，不沿用原 Web 工程的系统表、账号门禁、字典、接口包络或页面兼容层。不要求部署服务器，不做帐号体系、多端同步或多人协作。除用户主动选择的外部 AI 调用与主动点击的 GitHub Releases 更新检查外，核心流程不依赖网络。首版不承诺直接读取历史业务库；已有数据需要迁移时，优先评估经过预检的业务表格导入。
 
-本仓库已实现基础资料、考试与成绩管理、离线排座、方案历史、座位表导出、整库备份恢复、可选 AI 排座及关于与在线检查更新，并完成相关 Windows 桌面验收。
+本仓库已实现基础资料、考试与成绩管理、智能排座、方案历史、座位表导出、整库备份恢复、可选 AI 排座及关于与在线检查更新，并完成相关 Windows 桌面验收。
 
 ## 2. 教师工作流
 
@@ -70,7 +70,7 @@ AI 只提交临时编号的分配建议。应用校验完整性、编号、座�
 
 **Excel 导入。** 学生与成绩接受原版业务表头，使用 `.xlsx` 预检、确认后写入。预检报告重复学号、未知学生或科目及非法分数，存在错误时整批不写入。成绩区分空白、缺考与清空，按科目合并并重算总分、排名与等级。新考试按班级顺序排名和四档分级，已有考试仍可使用得分率与竞赛排名。分数以百分之一分整数保存，支持导出并同步等级。
 
-**座位表导出。** 三种格式从已保存方案读取同一份导出数据。学生版字段限定为班级、讲台、座位与姓名，教师版另含学号、锁座状态及评分。Canvas 生成 PNG，并将 PDF 的座位图按横向 A4 批次分页。Rust 生成带版式的 Excel。三种格式都通过原生「另存为」选择目标路径，完整写入后替换目标文件。
+**座位表导出。** 三种格式从已保存方案读取同一份导出数据。Canvas 生成 PNG 与单页横向 A4 PDF：采用纯白底无背景色、深色表格线样式以适配黑白打印，排号与列号分别位于左侧与顶部表头，姓名居中显示（教师视角下方附学号与锁座标记），不附带规则评分。Rust 生成带版式的 Excel（学生版含班级、讲台、座位与姓名，教师版另含学号、锁座状态及评分工作表）。三种格式都通过原生「另存为」选择目标路径，完整写入后替换目标文件。
 
 ## 6. 备份与恢复
 
@@ -93,9 +93,10 @@ AI 只提交临时编号的分配建议。应用校验完整性、编号、座�
 node node_modules/@tauri-apps/cli/tauri.js build --target <target> --no-sign --ci -- --locked
 ```
 
-私有源码仓库的 [Build release candidates](../.github/workflows/build-release.yml) 工作流由维护者手动运行。同一次运行从同一提交构建并测试 Windows 11 x64、macOS Apple Silicon 和 Ubuntu 24.04 LTS x64，成功后将三个安装包、`latest.json` 和 `SHA256SUMS.txt` 汇集到 Actions 的 `release-candidate` 制品。清单的下载地址指向 `ClassmateHub-Releases` 对应版本的 Release。最终签名文件若与构建制品不同，发布前须按实际分发文件重新计算 SHA-256。
+由维护者手动运行源码仓库的 [Build release candidates](../.github/workflows/build-release.yml) 工作流。同一次运行从同一提交构建并测试 Windows 11 x64、macOS Apple Silicon 和 Ubuntu 24.04 LTS x64，成功后将三个安装包、`latest.json` 和 `SHA256SUMS.txt` 汇集到 Actions 的 `release-candidate` 制品。清单的下载地址指向 `ClassmateHub-Releases` 对应版本的 Release。最终签名文件若与构建制品不同，发布前须按实际分发文件重新计算 SHA-256。
 
 - 源码与安装包分开托管。默认更新源使用 `MeterYoug/ClassmateHub-Releases`，只在用户主动检查时访问 GitHub。公开 Release 用于分发安装包、清单和校验文件。
+- GitHub Release 标题标明版本和发布类型。正文用简表列出平台与架构、包型、实际大小和下载链接，每种包单独占一行，大小按附件字节数换算为 MiB。附件文件名带版本号、平台和架构。发布前核对 SHA-256，并简要列出实机验收状态及额外运行要求。源码仓库的 Release 使用同一套下载信息。
 - 安装文件与用户数据分开。应用标识为 `com.classmatehub.desktop`，升级沿用原标识与安装范围。Windows 的用户数据目录为 `%APPDATA%\com.classmatehub.desktop`，默认卸载保留数据。WebView2 已存在的 Windows 11 24H2 x64 环境已验证隔离版安装、升级和重装。未预装 WebView2 的断网安装仍待实测。
 - Windows 在检测到旧版 NSIS 安装时默认选中覆盖升级。`src-tauri/installer/installer.nsi` 基于 `tauri-bundler` 2.10.5 模板，定制升级提示与默认选项。升级 Tauri CLI 时应对照新版模板检查这些改动，模板许可随 Windows 包分发。 [上游 NSIS 模板](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.5/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi)
 - 升级前通过「备份与恢复」导出 `.classmatehub-backup`。备份恢复中断时，应用会在启动时尝试回退到恢复前快照。发布时如引入数据库迁移，还要验证迁移失败回滚，以及旧版无法读取新结构时使用旧版和兼容备份恢复。跨设备迁移后需重新配置 AI 接入点和凭据。

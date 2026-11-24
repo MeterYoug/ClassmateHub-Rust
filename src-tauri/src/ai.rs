@@ -431,8 +431,24 @@ pub fn list_ai_profiles(ai: State<'_, AiState>) -> Result<ProfileList, String> {
     ai.store.list()
 }
 
+#[derive(Deserialize)]
+pub struct DraftKey {
+    endpoint: String,
+    value: String,
+}
+
+fn key_for_endpoint(key: Option<DraftKey>, endpoint: &str) -> Result<Option<String>, String> {
+    let Some(key) = key else { return Ok(None); };
+    if key.endpoint.trim() != endpoint.trim() {
+        return Err("服务地址已变更，请为当前地址重新输入密钥".into());
+    }
+    check_key(Some(&key.value))?;
+    Ok(Some(key.value))
+}
+
 #[tauri::command]
-pub fn save_ai_profile(ai: State<'_, AiState>, profile: Profile, key: Option<String>, forget_key: bool, make_default: bool) -> Result<ProfileList, String> {
+pub fn save_ai_profile(ai: State<'_, AiState>, profile: Profile, key: Option<DraftKey>, forget_key: bool, make_default: bool) -> Result<ProfileList, String> {
+    let key = key_for_endpoint(key, &profile.settings.endpoint)?;
     ai.store.save_profile(profile, key, forget_key, make_default)
 }
 
@@ -442,9 +458,9 @@ pub fn change_ai_profile(ai: State<'_, AiState>, id: u64, remove: bool) -> Resul
 }
 
 #[tauri::command]
-pub async fn test_ai_profile(ai: State<'_, AiState>, mut profile: Profile, key: Option<String>, use_saved_key: bool) -> Result<(), String> {
+pub async fn test_ai_profile(ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<(), String> {
+    let key = key_for_endpoint(key, &profile.settings.endpoint)?;
     profile.settings = profile.settings.checked()?;
-    check_key(key.as_deref())?;
     let key = match key {
         None if use_saved_key => ai.store.key(profile.id, &profile.settings)?,
         key => key,
@@ -453,10 +469,10 @@ pub async fn test_ai_profile(ai: State<'_, AiState>, mut profile: Profile, key: 
 }
 
 #[tauri::command]
-pub async fn fetch_ai_models(ai: State<'_, AiState>, mut profile: Profile, key: Option<String>, use_saved_key: bool) -> Result<Vec<String>, String> {
+pub async fn fetch_ai_models(ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<Vec<String>, String> {
+    let key = key_for_endpoint(key, &profile.settings.endpoint)?;
     profile.settings.model = "model-discovery".into();
     let settings = profile.settings.checked()?;
-    check_key(key.as_deref())?;
     let key = match key {
         None if use_saved_key => ai.store.key(profile.id, &settings)?,
         key => key,
@@ -609,6 +625,16 @@ pub async fn fallback_ai(ai: State<'_, AiState>, id: String) -> Result<Plan, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draft_credentials_are_bound_to_the_endpoint_where_they_were_entered() {
+        let endpoint = "http://127.0.0.1:11434/a/chat/completions";
+        let key = || Some(DraftKey { endpoint: endpoint.into(), value: "test-fixture".into() });
+        assert!(key_for_endpoint(key(), "http://127.0.0.1:11434/b/chat/completions").is_err());
+        assert!(key_for_endpoint(key(), "http://127.0.0.1:8080/a/chat/completions").is_err());
+        assert_eq!(key_for_endpoint(key(), endpoint).unwrap().as_deref(), Some("test-fixture"));
+        assert_eq!(key_for_endpoint(None, endpoint).unwrap(), None);
+    }
 
     #[test]
     fn request_projection_and_returned_ids_enforce_the_privacy_and_lock_boundary() {

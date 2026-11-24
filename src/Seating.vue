@@ -31,6 +31,7 @@ import {
 } from 'element-plus'
 import {
   ArrowDown,
+  ArrowLeft,
   Back,
   CopyDocument,
   Download,
@@ -43,7 +44,7 @@ import {
   Setting,
   Unlock,
 } from '@element-plus/icons-vue'
-import { renderPlan } from './planExport'
+import { renderPlan } from './planExport.js'
 import { confirmAction, notifyError, notifyInfo, notifySuccess, notifyWarning } from './ui.js'
 
 const props = defineProps({
@@ -92,19 +93,45 @@ let dragStudent = null
 
 const scoreLevelLabels = ['A', 'B', 'C', 'D', 'E']
 
+const oppositePodium = { front: 'back', back: 'front', left: 'right', right: 'left' }
+const podium = computed(() => {
+  const snapshot = plan.value?.snapshot
+  if (!snapshot) return null
+  const side = snapshot.podium_side ?? (snapshot.podium_front ? 'front' : 'back')
+  return teacher.value ? oppositePodium[side] : side
+})
+
 const grid = computed(() => {
   if (!plan.value) return []
   const { snapshot, assignments } = plan.value
   const positions = new Map(snapshot.positions.map(item => [`${item.row}:${item.column}`, item]))
   const students = new Map(snapshot.students.map(item => [item.id, item]))
   const occupied = new Map(assignments.map(item => [item.position_id, item]))
-  return Array.from({ length: snapshot.rows * snapshot.columns }, (_, index) => {
+  const cells = Array.from({ length: snapshot.rows * snapshot.columns }, (_, index) => {
     const row = Math.floor(index / snapshot.columns) + 1
     const column = (index % snapshot.columns) + 1
     const position = positions.get(`${row}:${column}`)
     const assignment = occupied.get(position?.id)
     return { row, column, position, assignment, student: students.get(assignment?.student_id) }
   })
+  return teacher.value ? cells.reverse() : cells
+})
+
+const displayColumns = computed(() => {
+  const count = plan.value?.snapshot.columns ?? 0
+  const list = Array.from({ length: count }, (_, index) => index + 1)
+  return teacher.value ? list.reverse() : list
+})
+
+const gridRows = computed(() => {
+  const count = plan.value?.snapshot.columns ?? 0
+  if (!count || !grid.value.length) return []
+  const rows = []
+  for (let offset = 0; offset < grid.value.length; offset += count) {
+    const cells = grid.value.slice(offset, offset + count)
+    rows.push({ row: cells[0].row, cells })
+  }
+  return rows
 })
 
 const total = computed(() => (plan.value?.ratings ?? []).reduce((sum, item) => sum + item.score, 0))
@@ -169,6 +196,7 @@ const comparedMovedIds = computed(() => new Set(comparisonChanges.value.map(item
 defineExpose({
   isBusy: () => busy.value,
   hasUnsavedChanges: () => dirty.value || busy.value,
+  returnToList: backToList,
 })
 
 async function canLeave() {
@@ -179,6 +207,12 @@ async function canLeave() {
     type: 'warning',
     danger: true,
   })
+}
+
+async function backToList() {
+  if (busy.value || !plan.value) return
+  if (!(await canLeave())) return
+  setPlan(null)
 }
 
 async function run(action) {
@@ -231,7 +265,7 @@ function setPlan(value, changed = false) {
   if (value) seed.value = value.seed
 }
 
-async function loadClass(autoOpen = true) {
+async function loadClass(autoOpen = false) {
   rooms.value = []
   exams.value = []
   history.value = []
@@ -301,7 +335,7 @@ async function generate(manual = false) {
   await run(async () => {
     setPlan(await invoke(manual ? 'new_manual_plan' : 'generate_plan', { ...inputOptions(), seed: readSeed() }), true)
     generateDialog.value = false
-    notifySuccess(manual ? '已创建空白手动草稿，可从右侧待入座池安排学生' : '已生成离线排座草稿')
+    notifySuccess(manual ? '已创建空白手动草稿，可从右侧待入座池安排学生' : '已生成智能排座草稿')
   })
 }
 
@@ -367,7 +401,7 @@ async function applyFallback(id) {
   const reason = aiFailure.value
   clearAi()
   setPlan(await invoke('fallback_ai', { id }), true)
-  notifyWarning(reason ? `${reason}。已改用离线排座生成草稿` : '已改用离线排座生成草稿')
+  notifyWarning(reason ? `${reason}。已改用本地智能排座生成草稿` : '已改用本地智能排座生成草稿')
 }
 
 async function confirmAi() {
@@ -530,7 +564,8 @@ async function save(confirm) {
   })
 }
 
-async function activate() {
+async function activate(id = plan.value?.id, openAfter = true) {
+  if (!id) return
   const ok = await confirmAction('重新启用这份方案并归档同班当前方案？', {
     title: '重新启用方案',
     confirmText: '确认启用',
@@ -538,7 +573,8 @@ async function activate() {
   })
   if (!ok) return
   await run(async () => {
-    setPlan(await invoke('activate_plan', { id: plan.value.id }))
+    const activated = await invoke('activate_plan', { id })
+    if (openAfter) setPlan(activated)
     await loadHistory()
     notifySuccess('方案已重新启用')
   })
@@ -566,9 +602,10 @@ async function cancelActiveEdit() {
   })
 }
 
-async function copy() {
+async function copy(id = plan.value?.id) {
+  if (!id) return
   await run(async () => {
-    setPlan(await invoke('copy_plan', { id: plan.value.id }))
+    setPlan(await invoke('copy_plan', { id }))
     await loadHistory()
     notifySuccess('已复制为可编辑草稿')
   })
@@ -588,7 +625,7 @@ async function exportFile(format) {
       const sheet = await invoke('plan_export_sheet', options)
       saved = await invoke('export_plan_image', await renderPlan(sheet, format))
     }
-    if (saved) notifySuccess(`座位表已导出（${teacher.value ? '教师版' : '学生版'}）`)
+    if (saved) notifySuccess(`座位表已导出（${options.teacher ? '教师版' : '学生版'}）`)
   })
 }
 
@@ -612,13 +649,13 @@ function cellLabel(cell) {
 watch(
   () => props.classId,
   () => {
-    void run(() => loadClass(true))
+    void run(() => loadClass(false))
   },
 )
 
 onMounted(() =>
   run(async () => {
-    await loadClass(true)
+    await loadClass(false)
     try {
       const view = await invoke('list_ai_profiles')
       aiProfiles.value = view.profiles.filter(item => item.profile.active).map(item => item.profile)
@@ -642,6 +679,8 @@ onMounted(() =>
       <div class="seating-toolbar">
         <div class="toolbar-left">
           <template v-if="plan">
+            <ElButton :icon="ArrowLeft" :disabled="busy" @click="backToList">返回</ElButton>
+            <span class="toolbar-divider" aria-hidden="true"></span>
             <div v-if="editable" class="plan-name-wrap">
               <span class="form-label is-required">方案名称</span>
               <ElInput
@@ -657,17 +696,20 @@ onMounted(() =>
             <strong v-else class="plan-title">{{ plan.name }}</strong>
             <ElTag :type="planStatusTagType(plan)" effect="dark" size="small">{{ planStatus(plan) }}</ElTag>
             <ElTag :type="plan.source === 'ai' ? 'primary' : 'info'" effect="plain" size="small">
-              {{ plan.source === 'ai' ? 'AI 排座' : '离线排座' }}
+              {{ plan.source === 'ai' ? 'AI 排座' : '智能排座' }}
             </ElTag>
             <ElTag v-if="dirty" type="warning" effect="light" size="small">未保存</ElTag>
             <span class="plan-meta">{{ plan.snapshot.classroom_name }}</span>
           </template>
-          <span v-else class="plan-meta">当前班级暂无已打开的方案</span>
+          <template v-else>
+            <strong class="plan-title">排座方案列表</strong>
+            <ElTag type="info" effect="plain" size="small">共 {{ history.length }} 份方案</ElTag>
+          </template>
         </div>
 
         <div class="toolbar-right">
-          <ElButton :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">新建方案</ElButton>
           <template v-if="plan">
+            <ElButton :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">新建方案</ElButton>
             <template v-if="editable && !editingActive">
               <ElTooltip content="随机更换排座种子重新生成，保持已锁定的座位不动" placement="bottom">
                 <ElButton :icon="Refresh" :loading="busy" @click="shuffleBatch">换一批</ElButton>
@@ -688,8 +730,8 @@ onMounted(() =>
               <ElButton v-if="plan.confirmed && !plan.archived" type="primary" :disabled="busy" @click="editingActive = true">
                 编辑已启用方案
               </ElButton>
-              <ElButton v-if="plan.archived" type="primary" :loading="busy" @click="activate">重新启用</ElButton>
-              <ElButton v-if="plan.id" :icon="CopyDocument" :disabled="busy || dirty" @click="copy">复制为草稿</ElButton>
+              <ElButton v-if="plan.archived" type="primary" :loading="busy" @click="activate()">重新启用</ElButton>
+              <ElButton v-if="plan.id" :icon="CopyDocument" :disabled="busy || dirty" @click="copy()">复制为草稿</ElButton>
             </template>
 
             <ElDropdown trigger="click" :disabled="busy || dirty || !plan.id" @command="exportFile">
@@ -704,19 +746,99 @@ onMounted(() =>
                 </ElDropdownMenu>
               </template>
             </ElDropdown>
+            <ElButton text @click="inspectorOpen = !inspectorOpen">
+              {{ inspectorOpen ? '收起侧栏' : '展开侧栏' }}
+            </ElButton>
           </template>
-          <ElButton text @click="inspectorOpen = !inspectorOpen">
-            {{ inspectorOpen ? '收起侧栏' : '展开侧栏' }}
-          </ElButton>
+          <template v-else>
+            <ElButton v-if="rooms.length && history.length" :loading="busy" @click="generate(false)">一键智能排座</ElButton>
+            <ElButton type="primary" :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">新建方案</ElButton>
+          </template>
         </div>
       </div>
 
-      <div class="seating-workspace" :class="{ 'no-inspector': !inspectorOpen }">
+      <div class="seating-workspace" :class="{ 'no-inspector': !plan || !inspectorOpen }">
         <div class="canvas-pane">
-          <div v-if="!plan" class="empty-canvas page-card">
+          <div v-if="!plan && history.length" class="plan-list-wrap">
+            <ElAlert
+              v-if="inputWarnings.length"
+              type="warning"
+              show-icon
+              :closable="false"
+              title="生成前数据检查提醒"
+              style="margin-bottom: 12px"
+            >
+              <ul class="warn-list">
+                <li v-for="warning in inputWarnings" :key="warning">{{ warning }}</li>
+              </ul>
+            </ElAlert>
+
+            <div class="page-card plan-list-card">
+              <div class="filter-bar">
+                <ElInput
+                  v-model="historySearch"
+                  clearable
+                  placeholder="搜索方案名称"
+                  :prefix-icon="Search"
+                  style="width: 240px"
+                />
+                <ElRadioGroup v-model="historyStatus">
+                  <ElRadioButton value="">全部</ElRadioButton>
+                  <ElRadioButton value="已启用">已启用</ElRadioButton>
+                  <ElRadioButton value="草稿">草稿</ElRadioButton>
+                  <ElRadioButton value="已归档">已归档</ElRadioButton>
+                </ElRadioGroup>
+              </div>
+
+              <ElTable
+                v-if="filteredHistory.length"
+                :data="filteredHistory"
+                stripe
+                border
+                style="width: 100%"
+                row-class-name="plan-list-row"
+                @row-dblclick="openHistoryItem"
+              >
+                <ElTableColumn label="方案名称" min-width="220">
+                  <template #default="{ row }">
+                    <button type="button" class="plan-name-link" :disabled="busy" @click="openHistoryItem(row)">
+                      {{ row.name }}
+                    </button>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="状态" width="110" align="center">
+                  <template #default="{ row }">
+                    <ElTag :type="planStatusTagType(row)" effect="dark" size="small">{{ planStatus(row) }}</ElTag>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="排座方式" width="120" align="center">
+                  <template #default="{ row }">
+                    <ElTag :type="row.source === 'ai' ? 'primary' : 'info'" effect="plain" size="small">
+                      {{ row.source === 'ai' ? 'AI 排座' : '智能排座' }}
+                    </ElTag>
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="更新时间" width="175">
+                  <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+                </ElTableColumn>
+                <ElTableColumn label="操作" width="270" fixed="right">
+                  <template #default="{ row }">
+                    <div class="action-group plan-row-actions">
+                      <ElButton size="small" type="primary" plain :disabled="busy" @click="openHistoryItem(row)">打开</ElButton>
+                      <ElButton v-if="row.archived" size="small" :disabled="busy" @click="activate(row.id, false)">重新启用</ElButton>
+                      <ElButton size="small" :disabled="busy" @click="copy(row.id)">复制为草稿</ElButton>
+                    </div>
+                  </template>
+                </ElTableColumn>
+              </ElTable>
+              <ElEmpty v-else description="暂无符合条件的排座方案" />
+            </div>
+          </div>
+
+          <div v-else-if="!plan" class="empty-canvas page-card">
             <ElEmpty :description="rooms.length ? '当前班级还没有排座方案，点击下方按钮立即生成' : '当前班级暂无可用教室，请先在「基础资料 → 教室管理」配置布局'">
               <div v-if="rooms.length" class="empty-actions">
-                <ElButton type="primary" size="large" :loading="busy" @click="generate(false)">一键离线排座</ElButton>
+                <ElButton type="primary" size="large" :loading="busy" @click="generate(false)">一键智能排座</ElButton>
                 <ElButton size="large" :disabled="busy" @click="generate(true)">空白手动排座</ElButton>
                 <ElButton size="large" :disabled="busy" @click="generateDialog = true">更多排座选项</ElButton>
               </div>
@@ -844,87 +966,90 @@ onMounted(() =>
             </ElAlert>
 
             <div class="canvas-board page-card">
-              <div v-if="plan.snapshot.podium_front" class="podium">讲 台</div>
+              <div v-if="podium === 'front'" class="podium">讲台</div>
               <div class="layout-scroll seating-scroll" aria-label="排座网格">
                 <div class="layout-body">
-                  <div v-if="plan.snapshot.podium_side === 'left'" class="podium podium-side">讲台</div>
+                  <div v-if="podium === 'left'" class="podium podium-side">讲台</div>
                   <div
                     class="seat-grid"
-                    :style="{ gridTemplateColumns: `repeat(${plan.snapshot.columns}, minmax(104px, 1fr))` }"
+                    :style="{ gridTemplateColumns: `52px repeat(${plan.snapshot.columns}, minmax(104px, 1fr))` }"
                   >
-                    <template v-for="cell in grid" :key="`${cell.row}:${cell.column}`">
-                      <button
-                        v-if="cell.position?.kind === 'seat'"
-                        type="button"
-                        class="seat-card"
-                        :class="{
-                          occupied: !!cell.student,
-                          vacant: !cell.student,
-                          locked: !!cell.assignment?.locked,
-                          chosen: selected === cell.position.id || batchSelection.includes(cell.position.id),
-                          'drag-over': dragOverId === cell.position.id,
-                          highlighted: !!cell.student && matchedStudentIds.has(cell.student.id),
-                          moved: !!cell.student && comparedMovedIds.has(cell.student.id),
-                        }"
-                        :aria-label="cellLabel(cell)"
-                        :disabled="busy || !editable"
-                        :draggable="!busy && editable && !!cell.assignment && !cell.assignment.locked"
-                        @click="chooseCell(cell)"
-                        @dragstart="startDrag($event, cell)"
-                        @dragenter.prevent="onDragOver($event, cell)"
-                        @dragover="onDragOver($event, cell)"
-                        @dragleave="onDragLeave(cell)"
-                        @drop="drop($event, cell)"
-                        @dragend="clearDragState"
-                      >
-                        <div class="seat-card-head">
-                          <span class="seat-pos">{{ cell.row }}-{{ cell.column }}</span>
+                    <div class="seat-axis-corner">排 \ 列</div>
+                    <div v-for="col in displayColumns" :key="`col-${col}`" class="seat-axis-header">{{ col }}</div>
+
+                    <template v-for="entry in gridRows" :key="`row-${entry.row}`">
+                      <div class="seat-axis-header seat-axis-row">{{ entry.row }}</div>
+                      <template v-for="cell in entry.cells" :key="`${cell.row}:${cell.column}`">
+                        <button
+                          v-if="cell.position?.kind === 'seat'"
+                          type="button"
+                          class="seat-card"
+                          :class="{
+                            occupied: !!cell.student,
+                            vacant: !cell.student,
+                            locked: !!cell.assignment?.locked,
+                            chosen: selected === cell.position.id || batchSelection.includes(cell.position.id),
+                            'drag-over': dragOverId === cell.position.id,
+                            highlighted: !!cell.student && matchedStudentIds.has(cell.student.id),
+                            moved: !!cell.student && comparedMovedIds.has(cell.student.id),
+                          }"
+                          :aria-label="cellLabel(cell)"
+                          :disabled="busy || !editable"
+                          :draggable="!busy && editable && !!cell.assignment && !cell.assignment.locked"
+                          @click="chooseCell(cell)"
+                          @dragstart="startDrag($event, cell)"
+                          @dragenter.prevent="onDragOver($event, cell)"
+                          @dragover="onDragOver($event, cell)"
+                          @dragleave="onDragLeave(cell)"
+                          @drop="drop($event, cell)"
+                          @dragend="clearDragState"
+                        >
                           <span v-if="cell.assignment?.locked" class="lock-pill" title="已锁定">🔒</span>
+                          <div class="seat-student-name">
+                            {{ cell.student?.name ?? '空座' }}
+                          </div>
+                          <div v-if="teacher && cell.student" class="seat-student-no">{{ cell.student.number }}</div>
+                          <div v-if="cell.student && showBadges.length" class="seat-badges">
+                            <span
+                              v-if="showBadges.includes('gender') && cell.student.gender != null"
+                              class="micro-badge"
+                              :class="cell.student.gender ? 'badge-boy' : 'badge-girl'"
+                            >
+                              {{ cell.student.gender ? '男' : '女' }}
+                            </span>
+                            <span v-if="showBadges.includes('vision') && cell.student.poor_vision" class="micro-badge badge-vision">
+                              近视
+                            </span>
+                            <span
+                              v-if="showBadges.includes('score') && studentScoreBadge(cell.student)"
+                              class="micro-badge badge-score"
+                            >
+                              {{ studentScoreBadge(cell.student) }}
+                            </span>
+                            <span
+                              v-if="showBadges.includes('discipline') && cell.student.discipline_attention"
+                              class="micro-badge badge-discipline"
+                            >
+                              关注
+                            </span>
+                          </div>
+                        </button>
+                        <div v-else-if="cell.position" class="seat-nonseat" :class="cell.position.kind">
+                          {{ cell.position.kind === 'aisle' ? '过道' : '不可用' }}
                         </div>
-                        <div class="seat-student-name">
-                          {{ cell.student?.name ?? '空座' }}
-                        </div>
-                        <div v-if="teacher && cell.student" class="seat-student-no">{{ cell.student.number }}</div>
-                        <div v-if="cell.student && showBadges.length" class="seat-badges">
-                          <span
-                            v-if="showBadges.includes('gender') && cell.student.gender != null"
-                            class="micro-badge"
-                            :class="cell.student.gender ? 'badge-boy' : 'badge-girl'"
-                          >
-                            {{ cell.student.gender ? '男' : '女' }}
-                          </span>
-                          <span v-if="showBadges.includes('vision') && cell.student.poor_vision" class="micro-badge badge-vision">
-                            近视
-                          </span>
-                          <span
-                            v-if="showBadges.includes('score') && studentScoreBadge(cell.student)"
-                            class="micro-badge badge-score"
-                          >
-                            {{ studentScoreBadge(cell.student) }}
-                          </span>
-                          <span
-                            v-if="showBadges.includes('discipline') && cell.student.discipline_attention"
-                            class="micro-badge badge-discipline"
-                          >
-                            关注
-                          </span>
-                        </div>
-                      </button>
-                      <div v-else-if="cell.position" class="seat-nonseat" :class="cell.position.kind">
-                        {{ cell.position.kind === 'aisle' ? '过道' : '不可用' }}
-                      </div>
-                      <div v-else class="seat-nonseat empty-slot" aria-hidden="true"></div>
+                        <div v-else class="seat-nonseat empty-slot" aria-hidden="true"></div>
+                      </template>
                     </template>
                   </div>
-                  <div v-if="plan.snapshot.podium_side === 'right'" class="podium podium-side">讲台</div>
+                  <div v-if="podium === 'right'" class="podium podium-side">讲台</div>
                 </div>
               </div>
-              <div v-if="!plan.snapshot.podium_front && !plan.snapshot.podium_side" class="podium">讲 台</div>
+              <div v-if="podium === 'back'" class="podium">讲台</div>
             </div>
           </template>
         </div>
 
-        <aside v-if="inspectorOpen" class="inspector-pane page-card">
+        <aside v-if="plan && inspectorOpen" class="inspector-pane page-card">
           <ElTabs v-model="inspectorTab" class="inspector-tabs">
             <ElTabPane label="评分与待入座" name="score">
               <div v-if="plan && editable && unseated.length" class="unseated-box">
@@ -1006,7 +1131,7 @@ onMounted(() =>
                   </div>
                   <div class="history-card-meta">
                     <ElTag size="small" effect="plain" :type="item.source === 'ai' ? 'primary' : 'info'">
-                      {{ item.source === 'ai' ? 'AI' : '离线' }}
+                      {{ item.source === 'ai' ? 'AI' : '智能' }}
                     </ElTag>
                     <span>{{ formatTime(item.updated_at) }}</span>
                   </div>
@@ -1092,7 +1217,7 @@ onMounted(() =>
               <ElInputNumber v-model="seed" :min="0" :max="4294967295" :disabled="busy" controls-position="right" style="flex: 1" />
               <ElButton :disabled="busy" @click="nextRandomSeed">随机种子</ElButton>
             </div>
-            <p class="form-hint" style="margin-top: 6px">相同资料和种子下，离线引擎会复现完全一致的座位表。</p>
+            <p class="form-hint" style="margin-top: 6px">相同资料和种子下，本地规则引擎会复现完全一致的座位表。</p>
           </ElCollapseItem>
         </ElCollapse>
 
@@ -1107,7 +1232,7 @@ onMounted(() =>
           <ElButton :disabled="busy || !roomId" @click="generate(true)">空白手动创建</ElButton>
           <ElButton :icon="MagicStick" :disabled="busy || !roomId" @click="prepareAi(false)">AI 排座</ElButton>
           <ElButton v-if="plan && editable && !editingActive" :disabled="busy" @click="regenerate">保留锁座重排</ElButton>
-          <ElButton type="primary" :loading="busy" :disabled="!roomId" @click="generate(false)">离线生成新方案</ElButton>
+          <ElButton type="primary" :loading="busy" :disabled="!roomId" @click="generate(false)">智能生成新方案</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -1133,13 +1258,13 @@ onMounted(() =>
           <pre>{{ JSON.stringify(aiPreview.payload, null, 2) }}</pre>
         </details>
         <ElAlert v-if="aiRunning" type="info" show-icon :closable="false" title="正在等待 AI 返回排座建议，当前本地方案仍完整保留…" />
-        <ElAlert v-else-if="aiFailure" type="error" show-icon :closable="false" :title="`${aiFailure}。可点击下方改用离线排座。`" />
-        <ElCheckbox v-else v-model="autoFallback">AI 失败或校验未通过时自动改用离线排座</ElCheckbox>
+        <ElAlert v-else-if="aiFailure" type="error" show-icon :closable="false" :title="`${aiFailure}。可点击下方改用本地智能排座。`" />
+        <ElCheckbox v-else v-model="autoFallback">AI 失败或校验未通过时自动改用本地智能排座</ElCheckbox>
       </div>
       <template #footer>
         <div class="drawer-footer">
           <ElButton @click="cancelAi">{{ aiRunning ? '取消 AI 调用' : '取消' }}</ElButton>
-          <ElButton v-if="aiFailure" type="primary" :loading="busy" @click="manualFallback">改用离线排座</ElButton>
+          <ElButton v-if="aiFailure" type="primary" :loading="busy" @click="manualFallback">改用本地智能排座</ElButton>
           <ElButton v-if="!aiRunning && !aiFailure" type="primary" :loading="busy" @click="confirmAi">确认发送</ElButton>
         </div>
       </template>
@@ -1174,9 +1299,54 @@ onMounted(() =>
   gap: 8px;
 }
 
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: #dce8e2;
+  margin: 0 2px;
+}
+
 .plan-title {
   font-size: 15px;
   color: #1f3c35;
+}
+
+.plan-list-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-list-card {
+  padding: 16px 18px;
+}
+
+.plan-row-actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.plan-row-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.plan-name-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1f5c4a;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-name-link:hover:not(:disabled) {
+  color: #2f7d66;
+  text-decoration: underline;
+}
+
+:deep(.plan-list-row) {
+  cursor: pointer;
 }
 
 .plan-name-wrap {
@@ -1262,19 +1432,46 @@ onMounted(() =>
   max-height: calc(100vh - 280px);
 }
 
+.seat-axis-corner,
+.seat-axis-header {
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  border-radius: 7px;
+  background: #f2f7f5;
+  border: 1px solid #dce8e2;
+  color: #48635a;
+  font-size: 12px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.seat-axis-corner {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b8179;
+}
+
+.seat-axis-row {
+  min-height: 78px;
+  font-size: 13px;
+}
+
 .seat-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  align-items: center;
   gap: 4px;
   min-height: 78px;
-  padding: 7px 8px;
+  padding: 8px 10px;
   border: 1px solid #cfe1d8;
   border-radius: 9px;
   background: #ffffff;
   color: #1f3933;
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition: transform 0.12s ease, border-color 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
 }
@@ -1333,15 +1530,10 @@ onMounted(() =>
   cursor: default;
 }
 
-.seat-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10px;
-  color: #7c9189;
-}
-
 .lock-pill {
+  position: absolute;
+  top: 5px;
+  right: 6px;
   font-size: 11px;
   line-height: 1;
 }

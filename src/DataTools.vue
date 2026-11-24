@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
   ElAlert,
@@ -18,18 +18,18 @@ import {
   ElTag,
 } from 'element-plus'
 import { CopyDocument, Download, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
-import { confirmAction, notifyError, notifyInfo, notifySuccess } from './ui.js'
+import { confirmAction, notifyError, notifyInfo, notifySuccess, notifyWarning } from './ui.js'
 
 const props = defineProps({
   mode: { type: String, required: true },
   dashboard: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['data-restored'])
+const emit = defineEmits(['recovery-changed'])
 
 const busy = ref(false)
 const summary = ref(null)
 const recovery = ref(null)
-const localDashboard = ref([])
+const localDashboard = ref(null)
 const profiles = ref([])
 const defaultProfileId = ref(null)
 const editor = ref(null)
@@ -39,9 +39,20 @@ const advancedOpen = ref([])
 const providerFilter = ref('')
 const profileSearch = ref('')
 const profileStatus = ref('')
-const key = ref('')
+const draftKey = ref(null)
+const key = computed({
+  get: () => draftKey.value?.value ?? '',
+  set: value => { draftKey.value = value ? { endpoint: editor.value.settings.endpoint.trim(), value } : null },
+})
 const forgetKey = ref(false)
-const hasKey = ref(false)
+const hasKey = computed(() => profiles.value.some(({ profile, has_key }) =>
+  has_key && profile.id === editor.value?.id && profile.provider === editor.value.provider &&
+  profile.settings.endpoint === editor.value.settings.endpoint.trim(),
+))
+watch([() => editor.value?.provider, () => editor.value?.settings.endpoint], () => {
+  key.value = ''
+  forgetKey.value = false
+}, { flush: 'sync' })
 const makeDefault = ref(false)
 const profileErrors = ref({})
 const about = ref(null)
@@ -116,7 +127,7 @@ const dirty = computed(
 )
 
 const overview = computed(() => {
-  const source = localDashboard.value.length ? localDashboard.value : props.dashboard
+  const source = localDashboard.value ?? props.dashboard
   return source.reduce(
     (acc, item) => ({
       classes: acc.classes + 1,
@@ -202,7 +213,6 @@ async function openProfile(item = null) {
   original.value = JSON.stringify(editor.value)
   key.value = ''
   forgetKey.value = false
-  hasKey.value = !!item?.has_key
   makeDefault.value = defaultProfileId.value === editor.value.id
   modelOptions.value = []
   advancedOpen.value = []
@@ -285,9 +295,11 @@ async function restore() {
   summary.value = null
   await run(async () => {
     const result = await invoke('apply_backup', { token })
+    if (result.status === 'restored') notifySuccess(result.message)
+    else if (result.status === 'rolled_back') notifyWarning(result.message)
+    else notifyError(result.message)
+    emit('recovery-changed')
     await loadRecovery()
-    emit('data-restored')
-    notifySuccess(result.message || '恢复成功')
   })
 }
 
@@ -295,7 +307,7 @@ function rollback() {
   return run(async () => {
     await invoke('retry_rollback')
     await loadRecovery()
-    emit('data-restored')
+    emit('recovery-changed')
     notifySuccess('已回退到恢复前的数据')
   })
 }
@@ -307,7 +319,7 @@ function saveSettings() {
     applyProfiles(
       await invoke('save_ai_profile', {
         profile,
-        key: forgetKey.value ? null : key.value || null,
+        key: forgetKey.value ? null : draftKey.value,
         forgetKey: forgetKey.value,
         makeDefault: makeDefault.value && profile.active,
       }),
@@ -322,8 +334,8 @@ function testConnection(item = null) {
   return run(async () => {
     await invoke('test_ai_profile', {
       profile: item?.profile ?? currentProfile(),
-      key: !item && !forgetKey.value ? key.value || null : null,
-      useSavedKey: !!item || !forgetKey.value,
+      key: !item && !forgetKey.value ? draftKey.value : null,
+      useSavedKey: item ? item.has_key : hasKey.value && !forgetKey.value,
     })
     notifySuccess('连接测试通过')
   })
@@ -333,8 +345,8 @@ function fetchModels() {
   return run(async () => {
     modelOptions.value = await invoke('fetch_ai_models', {
       profile: currentProfile(),
-      key: forgetKey.value ? null : key.value || null,
-      useSavedKey: !forgetKey.value,
+      key: forgetKey.value ? null : draftKey.value,
+      useSavedKey: hasKey.value && !forgetKey.value,
     })
     if (modelOptions.value.length) {
       notifySuccess(`已获取 ${modelOptions.value.length} 个可用模型，请在模型下拉框中选择`)
@@ -442,7 +454,7 @@ onMounted(() =>
         </template>
       </ElAlert>
 
-      <section class="page-card">
+      <section v-if="!recovery?.pending" class="page-card">
         <div class="section-head-row">
           <div>
             <h2>当前本地数据库概览</h2>
@@ -559,7 +571,7 @@ onMounted(() =>
             <strong>SQLite v{{ about?.sqlite_schema_version ?? 5 }}</strong>
           </div>
           <div class="meta-item">
-            <span class="meta-label">离线排座引擎</span>
+            <span class="meta-label">智能排座引擎</span>
             <strong>引擎 v{{ about?.engine_version ?? 1 }}</strong>
           </div>
           <div class="meta-item full-span">

@@ -14,6 +14,7 @@ pub struct Sheet {
     pub columns: u16,
     pub podium_front: bool,
     pub podium: &'static str,
+    pub teacher: bool,
     pub cells: Vec<Cell>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ratings: Option<Vec<Rating>>,
@@ -55,12 +56,20 @@ pub fn project(plan: &Plan, teacher: bool) -> Sheet {
             }
         })
         .collect();
+    let podium = match (teacher, plan.snapshot.podium()) {
+        (true, "front") => "back",
+        (true, "back") => "front",
+        (true, "left") => "right",
+        (true, "right") => "left",
+        (_, podium) => podium,
+    };
     Sheet {
         class_name: plan.snapshot.class_name.clone(),
         rows: plan.snapshot.rows,
         columns: plan.snapshot.columns,
-        podium_front: plan.snapshot.podium_front,
-        podium: plan.snapshot.podium(),
+        podium_front: podium == "front",
+        podium,
+        teacher,
         cells,
         ratings: teacher.then(|| plan.ratings.clone()),
     }
@@ -111,6 +120,7 @@ pub fn workbook(data: &Sheet) -> Result<Vec<u8>, String> {
         grid.set_row_height(u32::from(row) + offset, 68)
             .map_err(|e| e.to_string())?;
     }
+    let view_coordinate = |index, size| if data.teacher { size - index + 1 } else { index };
     for seat in &data.cells {
         let label = match seat.kind {
             CellKind::Seat => {
@@ -132,8 +142,8 @@ pub fn workbook(data: &Sheet) -> Result<Vec<u8>, String> {
             CellKind::Unavailable => "不可用".to_string(),
         };
         grid.write_string_with_format(
-            u32::from(seat.row) + offset,
-            seat.column - 1 + column_offset,
+            u32::from(view_coordinate(seat.row, data.rows)) + offset,
+            view_coordinate(seat.column, data.columns) - 1 + column_offset,
             label,
             if seat.kind == CellKind::Seat {
                 &cell

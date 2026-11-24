@@ -488,6 +488,45 @@ mod tests {
     }
 
     #[test]
+    fn restores_exam_eligibility_student_levels_and_saved_desks_together() {
+        use crate::scores::{self, ScoreInput, ScoreRemark};
+        let temporary = tempfile::tempdir().unwrap();
+        let storage = Storage::new(temporary.path().to_path_buf()).unwrap();
+        let (mut live, _) = storage.open().unwrap();
+        add_class(&live, "合成测试班");
+        live.execute_batch("INSERT INTO seat_student(id,class_id,student_no,name) VALUES(1,1,'01','甲'),(2,1,'02','乙');
+            INSERT INTO seat_exam(id,class_id,name,rank_grading) VALUES(1,1,'测试',1);
+            INSERT INTO seat_exam_subject(id,exam_id,name,full_score) VALUES(1,1,'数学',10000);
+            INSERT INTO seat_classroom(id,class_id,name,rows,columns,podium) VALUES(1,1,'教室',1,4,'front');
+            INSERT INTO seat_position(class_id,classroom_id,row_number,column_number,kind)
+            VALUES(1,1,1,1,'seat'),(1,1,1,2,'aisle'),(1,1,1,3,'seat'),(1,1,1,4,'seat');
+            INSERT INTO seat_student_relation(class_id,student_id,other_student_id,kind) VALUES(1,1,2,'NOT_DESKMATE')").unwrap();
+        let zero = ScoreInput { student_id: 1, subject_id: 1, value: "0".into() };
+        let note = ScoreRemark { student_id: 2, remark: "待补录".into() };
+        scores::save_score_changes(&mut live, 1, vec![zero], vec![note], None).unwrap();
+        assert_eq!(scores::sync_levels(&mut live, 1).unwrap(), 1);
+        let snapshot = plans::snapshot(&live, 1, 1, Some(1)).unwrap();
+        let draft = plans::generate(snapshot, 41).unwrap();
+        let saved = plans::save(&mut live, draft, true).unwrap();
+        let backup = temporary.path().join("exam.classmatehub-backup");
+        write_backup(&live, &backup).unwrap();
+        scores::save_scores(&mut live, 1, vec![ScoreInput { student_id: 2, subject_id: 1, value: "95".into() }], None).unwrap();
+        let database = Database(Mutex::new(live), Default::default());
+        let summary = storage.inspect(&database, &backup).unwrap();
+        assert_eq!(storage.restore(&database, &summary.token).unwrap().status, "restored");
+        let live = database.connection().unwrap();
+        let rows = scores::score_rows(&live, 1).unwrap();
+        assert_eq!((rows[0].total_score, rows[0].total_rank), (Some(0), Some(1)));
+        assert_eq!((rows[1].total_rank, rows[1].remark.as_str()), (None, "待补录"));
+        let students = database::list(&live, "students", Some(1)).unwrap();
+        assert_eq!(students[0]["score_level"], "A");
+        assert_eq!(students[1]["score_level"], "");
+        let plan = plans::read(&live, saved.id.unwrap()).unwrap();
+        assert_eq!(plan.snapshot, saved.snapshot);
+        assert_eq!(plan.assignments, saved.assignments);
+    }
+
+    #[test]
     fn v4_backup_is_upgraded_in_staging_and_keeps_business_records() {
         let temporary = tempfile::tempdir().unwrap();
         let storage = Storage::new(temporary.path().to_path_buf()).unwrap();

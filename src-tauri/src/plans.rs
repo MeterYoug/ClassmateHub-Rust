@@ -169,18 +169,21 @@ pub fn snapshot(
         .map_err(error)?;
     let mut used_groups: std::collections::HashSet<_> = positions.iter().filter(|p| !p.desk.is_empty())
         .map(|p| p.desk.clone()).collect();
-    for row in 1..=rows {
-        let seats: Vec<_> = positions.iter().enumerate().filter(|(_, p)| p.row == row && p.kind == CellKind::Seat)
-            .map(|(index, _)| index).collect();
-        for pair in seats.chunks_exact(2) {
-            let (first, second) = (pair[0], pair[1]);
-            if positions[first].column + 1 == positions[second].column
-                && positions[first].desk.is_empty() && positions[second].desk.is_empty() {
-                let mut group = format!("自动同桌 {row}-{}", positions[first].column);
-                while !used_groups.insert(group.clone()) { group.push('_'); }
-                positions[first].desk = group.clone();
-                positions[second].desk = group;
-            }
+    let mut pending: Option<usize> = None;
+    for index in 0..positions.len() {
+        let seat = &positions[index];
+        if seat.kind != CellKind::Seat || !seat.desk.is_empty() {
+            pending = None;
+            continue;
+        }
+        if let Some(first) = pending.filter(|&i| positions[i].row == seat.row && positions[i].column + 1 == seat.column) {
+            let mut group = format!("自动同桌 {}-{}", seat.row, positions[first].column);
+            while !used_groups.insert(group.clone()) { group.push('_'); }
+            positions[first].desk = group.clone();
+            positions[index].desk = group;
+            pending = None;
+        } else {
+            pending = Some(index);
         }
     }
     let mut warnings = Vec::new();
@@ -647,6 +650,36 @@ mod tests {
     }
 
     #[test]
+    fn automatic_desks_restart_at_aisles_gaps_rows_and_custom_groups() {
+        let db = fixture();
+        db.execute_batch("UPDATE seat_classroom SET columns=9;
+            UPDATE seat_rule SET active=0;
+            UPDATE seat_student_relation SET kind='NOT_DESKMATE';
+            UPDATE seat_position SET desk_group='' WHERE id=1;
+            INSERT INTO seat_position(id,class_id,classroom_id,row_number,column_number,kind,desk_group,active) VALUES
+            (7,1,1,1,4,'seat','',1),(8,1,1,1,5,'seat','',0),(9,1,1,1,6,'seat','',1),
+            (10,1,1,1,7,'seat','手工',1),(11,1,1,1,8,'seat','',1),(12,1,1,1,9,'seat','',1)").unwrap();
+        let snap = snapshot(&db, 1, 1, None).unwrap();
+        let group = |id| snap.positions.iter().find(|p| p.id == id).unwrap().desk.as_str();
+        assert_ne!(group(3), "");
+        assert_eq!(group(3), group(7));
+        assert_eq!(group(1), "");
+        assert_eq!(group(9), "");
+        assert_eq!(group(10), "手工");
+        assert_ne!(group(11), "");
+        assert_eq!(group(11), group(12));
+        assert_ne!(group(5), "");
+        assert_eq!(group(5), group(6));
+        let draft = adjust(new_draft(snap.clone(), 1), Adjustment::Place { student_id: 1, position: 3 }).unwrap();
+        assert!(adjust(draft, Adjustment::Place { student_id: 2, position: 7 }).unwrap_err().contains("不能同桌"));
+        for seed in 0..20 {
+            let (assignments, _) = seating::generate(&snap, &[], seed).unwrap();
+            let a = group(assignments[0].position_id);
+            assert!(a.is_empty() || a != group(assignments[1].position_id));
+        }
+    }
+
+    #[test]
     fn hard_constraints_use_podium_and_direct_neighbors() {
         let db = fixture();
         let snap = snapshot(&db, 1, 1, None).unwrap();
@@ -741,6 +774,42 @@ mod tests {
         assert!(crate::plan_export::workbook(&student_file)
             .unwrap()
             .starts_with(b"PK"));
+    }
+
+    #[test]
+    fn workbook_export_uses_the_selected_view_and_preserves_seat_labels() {
+        use calamine::{Data, Reader, Xlsx};
+        use std::io::Cursor;
+
+        let db = fixture();
+        for (physical, teacher_podium, student_origin, teacher_origin, podium_cell) in [
+            ("front", "back", (2, 0), (2, 2), (4, 0)),
+            ("back", "front", (1, 0), (3, 2), (1, 0)),
+            ("left", "right", (1, 1), (2, 2), (1, 3)),
+            ("right", "left", (1, 0), (2, 3), (1, 0)),
+        ] {
+            db.execute("UPDATE seat_classroom SET podium=?1", [physical]).unwrap();
+            let mut plan = new_draft(snapshot(&db, 1, 1, None).unwrap(), 1);
+            plan.assignments.push(Assignment { student_id: 1, position_id: 1, locked: true });
+            for (teacher, podium, origin, label) in [
+                (false, physical, student_origin, "1排 1座\n测试甲"),
+                (true, teacher_podium, teacher_origin, "1排 1座\n测试甲\nTEST-001 · 锁定"),
+            ] {
+                let sheet = crate::plan_export::project(&plan, teacher);
+                assert_eq!(sheet.podium, podium);
+                let bytes = crate::plan_export::workbook(&sheet).unwrap();
+                let mut file = Xlsx::new(Cursor::new(bytes)).unwrap();
+                let grid = file.worksheet_range("座位表").unwrap();
+                assert_eq!(grid.get_value(origin), Some(&Data::String(label.into())));
+                assert_eq!(
+                    grid.get_value((origin.0, if teacher { origin.1 - 1 } else { origin.1 + 1 })),
+                    Some(&Data::String("过道".into()))
+                );
+                if teacher {
+                    assert_eq!(grid.get_value(podium_cell), Some(&Data::String("讲台".into())));
+                }
+            }
+        }
     }
 
     #[test]

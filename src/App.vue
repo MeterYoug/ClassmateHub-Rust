@@ -38,7 +38,7 @@ const pages = [
   { id: 'home', label: '工作台', icon: House },
   { id: 'management', label: '基础资料', icon: FolderOpened },
   { id: 'scores', label: '考试与成绩', icon: DataAnalysis },
-  { id: 'seating', label: '离线排座', icon: Grid },
+  { id: 'seating', label: '智能排座', icon: Grid },
   { id: 'backup', label: '备份与恢复', icon: UploadFilled },
   { id: 'ai', label: 'AI 设置', icon: Cpu },
   { id: 'about', label: '关于与更新', icon: InfoFilled },
@@ -58,7 +58,7 @@ const steps = [
   { index: '03', title: '成绩', description: '录入／导入成绩并同步四档等级', target: 'scores', count: 'exams', unit: '次考试' },
   { index: '04', title: '教室', description: '绘制座位、过道与同桌分组', target: 'management', section: 'classrooms', count: 'layouts', unit: '个可用布局' },
   { index: '05', title: '规则', description: '配置前排、互斥与均衡权重', target: 'management', section: 'rules', count: 'rules', unit: '条规则' },
-  { index: '06', title: '方案', description: '离线／AI 排座、拖拽微调与导出', target: 'seating', count: 'plans', unit: '份方案' },
+  { index: '06', title: '方案', description: '智能／AI 排座、拖拽微调与导出', target: 'seating', count: 'plans', unit: '份方案' },
 ]
 
 const showGlobalClassPicker = computed(() => ['home', 'management', 'scores', 'seating'].includes(page.value))
@@ -71,7 +71,7 @@ const currentTopbar = computed(() => {
   const map = {
     home: { title: '工作台', subtitle: '班级排座与成绩管理概览' },
     scores: { title: '考试与成绩', subtitle: '支持原版 Excel 导入导出与等级同步' },
-    seating: { title: '离线排座', subtitle: '本地规则引擎排座，支持拖拽调座与快照历史' },
+    seating: { title: '智能排座', subtitle: '本地规则引擎与可选 AI 排座，支持拖拽调座与快照历史' },
     backup: { title: '备份与恢复', subtitle: 'SQLite 一致性整库备份与中断回退保护' },
     ai: { title: 'AI 设置', subtitle: '可选联网排座配置，按次确认脱敏字段' },
     about: { title: '关于与更新', subtitle: '版本信息、开源许可与 GitHub Releases 在线更新检查' },
@@ -179,6 +179,7 @@ async function handleGlobalClassChange(nextId) {
 async function navigate(target, section = 'classes', importStudents = false) {
   if (target === page.value && (target !== 'management' || section === managementSection.value)) {
     if (importStudents) openImport.value = true
+    else if (target === 'seating') await activePage.value?.returnToList?.()
     return
   }
   if (navigationBlocked.value) return
@@ -338,7 +339,7 @@ onBeforeUnmount(() => unlistenClose?.())
             ref="activePage"
             :mode="page"
             :dashboard="dashboard"
-            @data-restored="refreshGlobalData"
+            @recovery-changed="refreshGlobalData"
           />
           <section v-else class="content">
             <div class="hero">

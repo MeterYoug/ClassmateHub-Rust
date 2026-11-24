@@ -37,6 +37,20 @@ fn sheet(bytes: Vec<u8>) -> Result<Vec<Vec<String>>, String> {
     }).collect()).collect())
 }
 
+fn score_subject_headers(subjects: &[scores::Subject]) -> Vec<String> {
+    let names: HashSet<_> = subjects.iter().map(|s| s.name.as_str()).collect();
+    subjects.iter().map(|subject| {
+        let mut title = subject.name.clone();
+        if matches!(title.as_str(), "学号" | "姓名" | "学生姓名" | "备注" | "总分" | "班级排名" | "成绩等级" | "等级") {
+            loop {
+                title = format!("科目：{title}");
+                if !names.contains(title.as_str()) { break; }
+            }
+        }
+        title
+    }).collect()
+}
+
 pub fn score_preview(db: &Connection, exam_id: i64, bytes: Vec<u8>) -> Result<ScorePreview, String> {
     let class_id: i64 = db.query_row("SELECT class_id FROM seat_exam WHERE id=?", [exam_id], |r| r.get(0)).map_err(err)?;
     let exam = scores::exams(db, class_id)?.into_iter().find(|e| e.id == exam_id).ok_or("考试不存在")?;
@@ -47,6 +61,15 @@ pub fn score_preview(db: &Connection, exam_id: i64, bytes: Vec<u8>) -> Result<Sc
     let mut errors = Vec::new();
     if header.first().map(String::as_str) != Some("学号") { errors.push("第 1 列表头必须为学号".into()); }
     let mut names = HashSet::new();
+    names.insert("学号");
+    let subject_headers = score_subject_headers(&exam.subjects);
+    for (subject, title) in exam.subjects.iter().zip(&subject_headers) {
+        if title != &subject.name && !header.contains(title) {
+            if let Some(column) = header.iter().skip(1).position(|name| name == &subject.name) {
+                errors.push(format!("第 1 行第 {} 列「{}」与科目同名，请使用模板中的「{title}」列录入该科成绩", column + 2, subject.name));
+            }
+        }
+    }
     let mut columns = Vec::new();
     let mut name_column = None;
     let mut remark_column = None;
@@ -57,7 +80,7 @@ pub fn score_preview(db: &Connection, exam_id: i64, bytes: Vec<u8>) -> Result<Sc
             }
             continue;
         }
-        if !names.insert(name) { errors.push(format!("第 1 行第 {} 列：科目重复", index + 1)); }
+        if !names.insert(name.as_str()) { errors.push(format!("第 1 行第 {} 列：表头重复", index + 1)); }
         if name == "姓名" || name == "学生姓名" {
             name_column = Some(index);
             continue;
@@ -66,8 +89,8 @@ pub fn score_preview(db: &Connection, exam_id: i64, bytes: Vec<u8>) -> Result<Sc
         if matches!(name.as_str(), "总分" | "班级排名" | "成绩等级" | "等级") {
             continue;
         }
-        match exam.subjects.iter().find(|s| &s.name == name) {
-            Some(subject) => columns.push((index, subject)),
+        match subject_headers.iter().position(|title| title == name) {
+            Some(i) => columns.push((index, &exam.subjects[i])),
             None => errors.push(format!("第 1 行第 {} 列：未知科目 {}", index + 1, name)),
         }
     }
@@ -147,8 +170,9 @@ pub fn score_workbook(db: &Connection, exam_id: i64, export: bool, by_student_no
     }
     let mut book = rust_xlsxwriter::Workbook::new();
     let sheet = book.add_worksheet();
+    let subject_headers = score_subject_headers(&exam.subjects);
     let mut headers = vec!["学号", "姓名"];
-    headers.extend(exam.subjects.iter().map(|subject| subject.name.as_str()));
+    headers.extend(subject_headers.iter().map(String::as_str));
     headers.extend(["总分", "班级排名", "备注"]);
     if export { headers.push("成绩等级"); }
     for (column, title) in headers.into_iter().enumerate() {
@@ -343,6 +367,36 @@ mod tests {
             }
         }
         book.save_to_buffer().unwrap()
+    }
+
+    #[test]
+    fn reserved_subjects_round_trip_and_ambiguous_legacy_headers_are_rejected() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::database::initialize(&mut db).unwrap();
+        db.execute_batch("INSERT INTO seat_class(id,name,school_stage,grade,term) VALUES(1,'班','','','');
+            INSERT INTO seat_student(id,class_id,student_no,name) VALUES(1,1,'001','甲');
+            INSERT INTO seat_exam(id,class_id,name) VALUES(1,1,'测试')").unwrap();
+        let subjects = ["数学","等级","备注","学号","姓名","总分","学生姓名","成绩等级","班级排名","科目：等级"];
+        for name in subjects {
+            db.execute("INSERT INTO seat_exam_subject(exam_id,name,full_score) VALUES(1,?,10000)", [name]).unwrap();
+        }
+        let template = sheet(score_template(&db, 1).unwrap()).unwrap();
+        let titles: Vec<_> = template[0].iter().map(String::as_str).collect();
+        assert!(titles.contains(&"科目：科目：等级"));
+        let mut row = vec!["001","甲"];
+        row.extend(["80","90","70","71","72","73","74","75","76","77","","","待复核"]);
+        let preview = score_preview(&db, 1, workbook(&[&titles, &row])).unwrap();
+        assert!(preview.errors.is_empty(), "{:?}", preview.errors);
+        assert_eq!(preview.changes.len(), subjects.len());
+        scores::save_score_changes(&mut db, 1, preview.changes, preview.remarks, Some(preview.snapshot)).unwrap();
+        let exported = score_workbook(&db, 1, true, true).unwrap();
+        let reread = score_preview(&db, 1, exported).unwrap();
+        assert!(reread.errors.is_empty(), "{:?}", reread.errors);
+        assert_eq!(reread.changes[1].value, "90");
+        assert_eq!(reread.remarks[0].remark, "待复核");
+        let old = workbook(&[&["学号","数学","等级"], &["001","80","90"]]);
+        let rejected = score_preview(&db, 1, old).unwrap();
+        assert!(rejected.errors.iter().any(|message| message.contains("第 3 列") && message.contains("与科目同名")));
     }
 
     #[test]

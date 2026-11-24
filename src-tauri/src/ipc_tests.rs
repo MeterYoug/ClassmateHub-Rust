@@ -20,6 +20,54 @@ fn call(window: &WebviewWindow<MockRuntime>, command: &str, body: Value) -> Resu
 }
 
 #[test]
+fn model_discovery_only_sends_credentials_for_the_selected_service() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    fn models_service(count: usize) -> (String, std::thread::JoinHandle<Vec<Option<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let mut received = Vec::new();
+            for _ in 0..count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut lines = BufReader::new(&stream).lines().map(Result::unwrap);
+                assert!(lines.next().unwrap().starts_with("GET /v1/models "));
+                let auth = lines.take_while(|line| !line.is_empty())
+                    .filter_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("authorization").then(|| value.trim().to_owned())
+                    }).last();
+                received.push(auth);
+                let body = r#"{"data":[{"id":"demo"}]}"#;
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            received
+        });
+        (endpoint, worker)
+    }
+
+    let storage = tempfile::tempdir().unwrap();
+    let app = with_commands(mock_builder().manage(ai::AiState::new(storage.path().into(), "test.endpoint".into())))
+        .build(mock_context(noop_assets())).unwrap();
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    let (a, received_a) = models_service(1);
+    let (b, received_b) = models_service(2);
+    let fetch = |endpoint: &str, key: Value| call(&window, "fetch_ai_models", json!({
+        "profile":{"id":0,"name":"测试","provider":"CUSTOM","active":true,
+            "settings":{"endpoint":endpoint,"model":"demo","timeout_seconds":5}},
+        "key":key, "useSavedKey":false
+    }));
+    let key_a = json!({"endpoint":a,"value":"fixture-A"});
+    assert_eq!(fetch(&a, key_a.clone()).unwrap(), json!(["demo"]));
+    assert!(fetch(&b, key_a).is_err());
+    assert_eq!(fetch(&b, Value::Null).unwrap(), json!(["demo"]));
+    assert_eq!(fetch(&b, json!({"endpoint":b,"value":"fixture-B"})).unwrap(), json!(["demo"]));
+    assert_eq!(received_a.join().unwrap(), vec![Some("Bearer fixture-A".into())]);
+    assert_eq!(received_b.join().unwrap(), vec![None, Some("Bearer fixture-B".into())]);
+}
+
+#[test]
 fn commands_accept_frontend_payloads_and_preserve_data_across_copy() {
     let mut connection = Connection::open_in_memory().unwrap();
     database::initialize(&mut connection).unwrap();

@@ -134,7 +134,16 @@ const filteredRows = computed(() => {
 })
 
 const scoredCount = computed(() => rows.value.filter(row => row.details.length > 0).length)
-const dirty = computed(() => !!editor.value || !!templateEditor.value || !!preview.value || !!scoreDraft.value)
+const initialForm = ref('')
+const dirty = computed(() => {
+  if (preview.value) return true
+  if (scoreDraft.value) {
+    const { input, remarks } = computeScoreDiff()
+    return input.length > 0 || remarks.length > 0
+  }
+  const form = editor.value ?? templateEditor.value
+  return form != null && JSON.stringify(form) !== initialForm.value
+})
 
 const nextActiveStudentRow = computed(() => {
   if (!scoreDraft.value) return null
@@ -157,6 +166,21 @@ async function canLeave() {
     type: 'warning',
     danger: true,
   })
+}
+
+let closePending = false
+async function closeDrawer(done) {
+  if (saving.value || closePending) return
+  closePending = true
+  try {
+    if (!(await canLeave()) || saving.value) return
+    scoreDraft.value = null
+    editor.value = null
+    templateEditor.value = null
+    done?.()
+  } finally {
+    closePending = false
+  }
 }
 
 function money(value) {
@@ -220,6 +244,7 @@ async function changeExam(nextId) {
   if (!(await canLeave())) return
   examId.value = nextId ? Number(nextId) : null
   editor.value = null
+  templateEditor.value = null
   preview.value = null
   scoreDraft.value = null
   await run(refreshRows)
@@ -253,6 +278,7 @@ async function newExam() {
     addSubject(template ?? { name, full_score: 15000 })
   }
   originalExam.value = null
+  initialForm.value = JSON.stringify(editor.value)
   examErrors.value = {}
   templateEditor.value = null
   preview.value = null
@@ -269,6 +295,7 @@ async function editExam() {
   preview.value = null
   templateEditor.value = null
   editor.value.subjects = editor.value.subjects.map(subject => ({ ...subject, display_full: money(subject.full_score) }))
+  initialForm.value = JSON.stringify(editor.value)
 }
 
 function addSubject(template) {
@@ -418,6 +445,7 @@ async function editTemplate(item = null) {
   templateEditor.value = item
     ? { ...item, display_full: money(item.full_score) }
     : { id: 0, name: '', school_stage: '', grade: '', display_full: '100', active: true }
+  initialForm.value = JSON.stringify(templateEditor.value)
   templateErrors.value = {}
   editor.value = null
   preview.value = null
@@ -770,7 +798,7 @@ onMounted(() =>
       :model-value="!!scoreDraft"
       :title="scoreDraft ? `录入成绩 · ${scoreDraft.name}（${scoreDraft.student_no}）` : '录入成绩'"
       size="min(92vw, 520px)"
-      :before-close="done => { scoreDraft = null; done() }"
+      :before-close="closeDrawer"
     >
       <div v-if="scoreDraft && activeExam" class="drawer-form">
         <p class="form-hint">已回显当前已有分数。仅提交改动科目；清空输入框或点击「清空」可删除该科成绩。</p>
@@ -797,7 +825,7 @@ onMounted(() =>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="scoreDraft = null">取消</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
           <template v-if="nextActiveStudentRow">
             <ElButton :loading="saving" @click="saveScore(false)">仅保存</ElButton>
             <ElButton type="primary" :loading="saving" @click="saveScore(true)">
@@ -814,7 +842,7 @@ onMounted(() =>
       :model-value="!!editor"
       :title="editor?.id ? '编辑考试' : '新建考试'"
       size="min(94vw, 660px)"
-      :before-close="done => { editor = null; done() }"
+      :before-close="closeDrawer"
     >
       <div v-if="editor" class="drawer-form">
         <p class="required-legend"><span>*</span> 为必填项</p>
@@ -932,7 +960,7 @@ onMounted(() =>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="editor = null">取消</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
           <ElButton type="primary" :loading="saving" @click="saveExam">保存考试</ElButton>
         </div>
       </template>
@@ -943,7 +971,7 @@ onMounted(() =>
       :model-value="!!templateEditor"
       :title="templateEditor?.id ? '编辑科目模板' : '新增科目模板'"
       size="min(92vw, 480px)"
-      :before-close="done => { templateEditor = null; done() }"
+      :before-close="closeDrawer"
     >
       <div v-if="templateEditor" class="drawer-form">
         <p class="required-legend"><span>*</span> 为必填项</p>
@@ -1013,7 +1041,7 @@ onMounted(() =>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="templateEditor = null">取消</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
           <ElButton type="primary" :loading="saving" @click="saveTemplate">保存模板</ElButton>
         </div>
       </template>

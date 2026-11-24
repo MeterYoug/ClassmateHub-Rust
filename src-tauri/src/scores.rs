@@ -173,6 +173,15 @@ fn rank_grade(rank: usize, count: usize) -> &'static str {
 pub fn sync_levels(db: &mut Connection, exam_id: i64) -> Result<usize, String> {
     let tx = db.transaction().map_err(err)?;
     let class_id: i64 = tx.query_row("SELECT class_id FROM seat_exam WHERE id=?1", [exam_id], |row| row.get(0)).map_err(err)?;
+    // A stale entry changes the quartiles for other pupils in the same exam too.
+    let stale_ranking = tx.query_row("SELECT EXISTS(
+        SELECT 1 FROM seat_student_score t WHERE t.exam_id=?1 AND t.total_grade IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM seat_student_score_detail d JOIN seat_exam_subject s ON s.id=d.exam_subject_id
+                        WHERE d.exam_id=t.exam_id AND d.student_id=t.student_id AND d.status='scored' AND s.counts_toward_total=1)
+    )", [exam_id], |row| row.get::<_, bool>(0)).map_err(err)?;
+    if stale_ranking {
+        return Err("本场旧排名包含未录入计分成绩的学生，请先备份并核对重算本场成绩，再同步等级".into());
+    }
     let count = tx.execute("UPDATE seat_student SET score_level=(
         SELECT total_grade FROM seat_student_score WHERE exam_id=?1 AND student_id=seat_student.id)
         WHERE class_id=?2 AND id IN (
@@ -203,13 +212,16 @@ fn recalculate(tx: &Transaction<'_>, exam_id: i64) -> Result<(), String> {
     let mut totals = Vec::new();
     for student in students {
         let mut total = 0;
-        let mut complete = !required.is_empty();
+        let mut scored_subjects = 0;
         for subject in &required {
             let score: Option<i64> = tx.query_row("SELECT score FROM seat_student_score_detail WHERE exam_id=? AND student_id=? AND exam_subject_id=? AND status='scored'",
                 params![exam_id, student, subject.id], |r| r.get(0)).optional().map_err(err)?;
-            if let Some(score) = score { total += score; } else { complete = false; }
+            if let Some(score) = score {
+                total += score;
+                scored_subjects += 1;
+            }
         }
-        if complete || (exam.rank_grading && !required.is_empty()) { totals.push((student, total)); }
+        if scored_subjects > 0 && (exam.rank_grading || scored_subjects == required.len()) { totals.push((student, total)); }
         else {
             tx.execute("UPDATE seat_student_score SET total_score=NULL,total_rank=NULL,total_grade=NULL WHERE exam_id=? AND student_id=?", params![exam_id,student]).map_err(err)?;
         }
@@ -316,6 +328,36 @@ pub fn score_rows(db: &Connection, exam_id: i64) -> Result<Vec<ScoreRow>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rank_grading_requires_a_scored_counting_subject_and_accepts_zero() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::database::initialize(&mut db).unwrap();
+        db.execute_batch("INSERT INTO seat_class(id,name,school_stage,grade,term) VALUES(1,'测试班','','','');
+            INSERT INTO seat_student(id,class_id,student_no,name,score_level) VALUES
+            (1,1,'01','甲','D'), (2,1,'02','乙',''), (3,1,'03','丙',''), (4,1,'04','丁','');
+            INSERT INTO seat_exam(id,class_id,name,rank_grading) VALUES(1,1,'测试',1);
+            INSERT INTO seat_exam_subject(id,exam_id,name,full_score,counts_toward_total)
+            VALUES(1,1,'数学',10000,1),(2,1,'语文',10000,1),(3,1,'选修',10000,0)").unwrap();
+        let mark = |student_id, subject_id, value: &str| ScoreInput { student_id, subject_id, value: value.into() };
+        let marks = vec![mark(2,1,"0"), mark(3,1,"缺考"), mark(4,3,"90")];
+        let remark = |value: &str| vec![ScoreRemark { student_id: 1, remark: value.into() }];
+        save_score_changes(&mut db, 1, marks, remark("待补录"), None).unwrap();
+        save_score_changes(&mut db, 1, vec![], remark(""), None).unwrap();
+        let totals = |db: &Connection| score_rows(db, 1).unwrap().into_iter()
+            .map(|r| (r.total_score, r.total_rank, r.total_grade)).collect::<Vec<_>>();
+        assert_eq!(totals(&db), vec![(None,None,None),(Some(0),Some(1),Some("A".into())),(None,None,None),(None,None,None)]);
+        assert_eq!(sync_levels(&mut db, 1).unwrap(), 1);
+        // One stale grade can change the rankings of all eligible students.
+        db.execute("UPDATE seat_student_score SET total_score=0,total_rank=2,total_grade='C' WHERE student_id=3", []).unwrap();
+        assert!(sync_levels(&mut db, 1).unwrap_err().contains("旧排名"));
+        assert_eq!(crate::database::list(&db, "students", Some(1)).unwrap()[0]["score_level"], "D");
+        save_scores(&mut db, 1, vec![mark(1,1,"90")], None).unwrap();
+        assert_eq!(totals(&db)[1].1, Some(2));
+        save_scores(&mut db, 1, vec![mark(1,1,"清空")], None).unwrap();
+        assert_eq!(totals(&db)[0], (None,None,None));
+        assert_eq!(totals(&db)[1].1, Some(1));
+    }
 
     #[test]
     fn scores_merge_rank_absence_and_reject_stale_imports() {
