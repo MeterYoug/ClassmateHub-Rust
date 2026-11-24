@@ -36,37 +36,37 @@ Get installers, the update manifest, and checksum files from the [latest public 
 
 ## Screenshots
 
-> All screenshots use synthetic sample data.
+> Screenshots show the current development preview with synthetic sample data.
 
 ### 1. Dashboard
 
 Check the current class's seating readiness, key counts, and six preparation steps. Click a card to open the relevant module.
 
-![Dashboard](../images/dashboard.png)
+![Dashboard](../images/en/dashboard.png)
 
 ### 2. Smart seating and live rule scoring
 
 The standalone Rust rules engine generates plans offline and prioritizes empty seats at the bottom right, away from the podium. Manage plans, toggle seat labels, swap seats by dragging, undo and redo, lock seats in bulk, compare past plans, and export in several formats. The sidebar shows live scores for individual soft rules.
 
-![Smart seating and live rule scoring](../images/seating.png)
+![Smart seating and live rule scoring](../images/en/seating.png)
 
 ### 3. Visual classroom layout editor
 
 Set the podium on any of the four sides, draw seats, aisles, and unavailable positions, and define desk-mate groups. Click a row or column number to edit it in bulk. The editor shows a running count of usable seats.
 
-![Visual classroom layout editor](../images/classroom-layout.png)
+![Visual classroom layout editor](../images/en/classroom-layout.png)
 
 ### 4. Exams and grades
 
 Use default subjects for each class, maintain subject templates, run validation before importing `.xlsx` workbooks, and enter grades one student at a time. ClassmateHub calculates subject and overall rankings and assigns A through D grade bands. Sync those bands to student records for use in seating rules.
 
-![Exams and grades](../images/scores.png)
+![Exams and grades](../images/en/scores.png)
 
 ### 5. About and online updates
 
 View the current app version, runtime platform, SQLite and seating engine versions, and the location of local data. Manually check GitHub Releases for updates and download new packages. Custom HTTPS update sources are supported. Update checks send no student or school data.
 
-![About and online updates](../images/about.png)
+![About and online updates](../images/en/about.png)
 
 ## Features
 
