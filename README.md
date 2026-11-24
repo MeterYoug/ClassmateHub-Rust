@@ -11,6 +11,8 @@
 [![Offline](https://img.shields.io/badge/核心排座-完全离线-48a782?style=flat-square)](#核心能力)
 [![License](https://img.shields.io/badge/License-MIT-5b7a70?style=flat-square)](LICENSE)
 
+**简体中文** · [English](docs/readme/README.en.md) · [繁體中文](docs/readme/README.zh-Hant.md) · [日本語](docs/readme/README.ja.md) · [한국어](docs/readme/README.ko.md)
+
 [下载安装包](#下载与平台支持) · [界面预览](#界面预览) · [核心能力](#核心能力) · [使用说明](#使用与升级说明) · [本地开发](#本地开发)
 
 </div>
