@@ -27,12 +27,12 @@ Get installers, the update manifest, and checksum files from the [latest public 
 
 | Platform | Package format | Build and test status | Notes |
 | --- | --- | --- | --- |
-| **Windows 11 x64** | NSIS installer `.exe`, portable `.zip` | Automated tests, packaging, and ZIP extraction verified | The installer bundles the offline WebView2 installer and supports in-place upgrades. The portable version uses the system's existing WebView2 Runtime. |
+| **Windows 10/11 x64** | NSIS installer `.exe`, portable `.zip` | Automated tests, packaging, and ZIP extraction verified. Testing on a Windows 10 machine is pending. | The installer bundles the offline WebView2 installer and supports in-place upgrades. The portable version uses the system's existing WebView2 Runtime. |
 | **macOS (Apple Silicon)** | `.dmg` (macOS 15.0 or later) | Automated tests and packaging passed on GitHub Actions | **Installation, runtime, and upgrades have yet to be tested on a physical machine.** |
 | **Ubuntu 24.04 LTS x64** | `.deb` (`classmatehub`) | Automated tests and packaging passed on GitHub Actions | **Installation, runtime, and upgrades have yet to be tested on a physical machine.** |
 
 > [!NOTE]
-> On macOS and Linux, verification so far covers automated tests and packaging on GitHub Actions. On Windows 11 x64, close ClassmateHub before running a new installer for an in-place upgrade. Local data is stored separately and is kept during in-place upgrades and standard uninstallation.
+> On macOS and Linux, verification so far covers automated tests and packaging on GitHub Actions. On Windows 10/11 x64, close ClassmateHub before running a new installer for an in-place upgrade. Local data is stored separately and is kept during in-place upgrades and standard uninstallation.
 
 ## Screenshots
 

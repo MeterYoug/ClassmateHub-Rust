@@ -84,7 +84,7 @@ AI 只提交临时编号的分配建议。应用校验完整性、编号、座�
 
 | 首批目标 | 格式和配置 | Rust 目标 |
 | --- | --- | --- |
-| Windows 11 x64 | 当前用户安装的 NSIS `.exe`，内置 WebView2 Evergreen 离线安装程序。MSI 暂缓。 | `x86_64-pc-windows-msvc` |
+| Windows 10／11 x64 | 当前用户安装的 NSIS `.exe`，内置 WebView2 Evergreen 离线安装程序，ZIP 解压版使用系统已有的 WebView2 Runtime。Windows 10 实机验证待完成。MSI 暂缓。 | `x86_64-pc-windows-msvc` |
 | Apple Silicon，macOS 15.0 起 | `.dmg`，启用 Hardened Runtime。 | `aarch64-apple-darwin` |
 | Ubuntu 24.04 LTS x64 | `.deb`，包名为 `classmatehub`，依赖 WebKitGTK、GTK 3 和 OpenSSL 3。 | `x86_64-unknown-linux-gnu` |
 
@@ -94,7 +94,7 @@ AI 只提交临时编号的分配建议。应用校验完整性、编号、座�
 node node_modules/@tauri-apps/cli/tauri.js build --target <target> --no-sign --ci -- --locked
 ```
 
-由维护者手动运行源码仓库的 [Build release candidates](../.github/workflows/build-release.yml) 工作流。同一次运行从同一提交构建并测试 Windows 11 x64、macOS Apple Silicon 和 Ubuntu 24.04 LTS x64，成功后将三个安装包、`latest.json` 和 `SHA256SUMS.txt` 汇集到 Actions 的 `release-candidate` 制品。清单的下载地址指向 `ClassmateHub-Releases` 对应版本的 Release。最终签名文件若与构建制品不同，发布前须按实际分发文件重新计算 SHA-256。
+由维护者手动运行源码仓库的 [Build release candidates](../.github/workflows/build-release.yml) 工作流。同一次运行从同一提交构建并测试 Windows x64、macOS Apple Silicon 和 Ubuntu 24.04 LTS x64，其中 Windows 构建使用 `windows-2025` 运行器。成功后将三个安装包、`latest.json` 和 `SHA256SUMS.txt` 汇集到 Actions 的 `release-candidate` 制品。清单的下载地址指向 `ClassmateHub-Releases` 对应版本的 Release。最终签名文件若与构建制品不同，发布前须按实际分发文件重新计算 SHA-256。
 
 - 源码与安装包分开托管。默认更新源使用 `MeterYoug/ClassmateHub-Releases`，只在用户主动检查时访问 GitHub。公开 Release 用于分发安装包、清单和校验文件。
 - GitHub Release 标题标明版本和发布类型。正文用简表列出平台与架构、包型、实际大小和下载链接，每种包单独占一行，大小按附件字节数换算为 MiB。附件文件名带版本号、平台和架构。发布前核对 SHA-256，并简要列出实机验收状态及额外运行要求。源码仓库的 Release 使用同一套下载信息。

@@ -27,12 +27,12 @@
 
 | 平台 | 檔案格式 | 建置與驗證狀態 | 說明 |
 | --- | --- | --- | --- |
-| **Windows 11 x64** | NSIS 安裝版 `.exe`、免安裝版 `.zip` | 已通過自動化測試、打包及 ZIP 解壓縮驗證 | 安裝版內含 WebView2 離線安裝程式，支援覆蓋升級。免安裝版使用系統既有的 WebView2 Runtime。 |
+| **Windows 10／11 x64** | NSIS 安裝版 `.exe`、免安裝版 `.zip` | 已通過自動化測試、打包及 ZIP 解壓縮驗證。Windows 10 實機驗證待完成 | 安裝版內含 WebView2 離線安裝程式，支援覆蓋升級。免安裝版使用系統既有的 WebView2 Runtime。 |
 | **macOS（Apple Silicon）** | `.dmg`（macOS 15.0 以上） | 已通過 GitHub Actions 自動化測試及打包 | **尚未在實機測試安裝、執行與升級。** |
 | **Ubuntu 24.04 LTS x64** | `.deb`（`classmatehub`） | 已通過 GitHub Actions 自動化測試及打包 | **尚未在實機測試安裝、執行與升級。** |
 
 > [!NOTE]
-> macOS 和 Linux 目前的驗證範圍為 GitHub Actions 自動化測試及打包。Windows 11 x64 覆蓋升級前，請先關閉班伴，再執行新版安裝程式。應用程式會另外儲存本機資料，覆蓋升級與預設解除安裝皆會保留資料。
+> macOS 和 Linux 目前的驗證範圍為 GitHub Actions 自動化測試及打包。Windows 10／11 x64 覆蓋升級前，請先關閉班伴，再執行新版安裝程式。應用程式會另外儲存本機資料，覆蓋升級與預設解除安裝皆會保留資料。
 
 ## 介面預覽
 
