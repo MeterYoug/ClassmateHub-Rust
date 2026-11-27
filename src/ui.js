@@ -1,12 +1,13 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { localizeMessage } from './i18n.js'
 
 export function formatError(error) {
-  if (!error) return '操作失败'
-  return typeof error === 'string' ? error : (error.message ?? String(error))
+  if (!error) return localizeMessage('操作失败')
+  return localizeMessage(typeof error === 'string' ? error : (error.message ?? String(error)))
 }
 
 export function notifySuccess(message) {
-  ElMessage.success({ message, duration: 2600, grouping: true })
+  ElMessage.success({ message: localizeMessage(message), duration: 2600, grouping: true })
 }
 
 export function notifyError(error) {
@@ -14,11 +15,11 @@ export function notifyError(error) {
 }
 
 export function notifyWarning(message) {
-  ElMessage.warning({ message, duration: 3600, showClose: true, grouping: true })
+  ElMessage.warning({ message: localizeMessage(message), duration: 3600, showClose: true, grouping: true })
 }
 
 export function notifyInfo(message) {
-  ElMessage.info({ message, duration: 2800, grouping: true })
+  ElMessage.info({ message: localizeMessage(message), duration: 2800, grouping: true })
 }
 
 export async function confirmAction(message, options = {}) {
@@ -30,9 +31,9 @@ export async function confirmAction(message, options = {}) {
     danger = false,
   } = options
   try {
-    await ElMessageBox.confirm(message, title, {
-      confirmButtonText: confirmText,
-      cancelButtonText: cancelText,
+    await ElMessageBox.confirm(localizeMessage(message), localizeMessage(title), {
+      confirmButtonText: localizeMessage(confirmText),
+      cancelButtonText: localizeMessage(cancelText),
       type,
       confirmButtonClass: danger ? 'el-button--danger' : '',
       closeOnClickModal: false,

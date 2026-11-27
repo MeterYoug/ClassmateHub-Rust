@@ -19,6 +19,7 @@
 | 座位方案 | 规则生成、冲突提示、拖拽换座、锁定、重新生成、评分明细、确认与历史查看。历史方案按快照展示，不随当前教室、规则或学生资料改动而漂移。 |
 | 导出与备份 | 方案导出为 PNG、Excel、PDF，可切换教师／学生视角；整库备份与恢复单独入口，恢复前明确提示覆盖范围。 |
 | AI 配置 | 管理多个兼容 Chat Completions 的模型配置，支持供应商预设、默认模型、模型发现和保存前连接测试。每次确认字段后发送，结果经过本地规则校验。 |
+| 应用锁 | 可选的本地访问保护（默认关闭），支持密码解锁、一键锁屏、空闲自动锁与一次性恢复码重置；密码与恢复码以 Argon2id 哈希存放在应用数据目录的 `app-lock.json`，独立于业务库与备份。仅防同机通过软件界面查看或修改，不对 `classmate_hub.db` 或备份文件做静态加密。 |
 | 关于与更新 | 展示当前版本、运行平台、数据库与引擎版本、本地数据目录及 MIT 许可；支持用户主动点击直连 GitHub Releases 检查更新（兼容 `latest.json` 清单与 Releases API），并提供发布页与安装包下载链接兜底。 |
 
 ## 3. 技术架构
@@ -28,7 +29,7 @@
 | 桌面与前端 | Tauri v2 + Vue 3 + Vite + Element Plus。Vue 负责交互、状态和预览，Tauri 负责跨平台窗口、系统文件对话框及本地命令。 |
 | 本地业务 | Rust 负责校验、事务和持久化。Tauri IPC 按业务定义类型化输入、结果和错误；分页字段只在列表需要时返回。 |
 | 排座与存储 | 排座引擎以业务快照为输入，可脱离 UI、SQLite 和网络运行。通过 `rusqlite` 使用内嵌 SQLite 与一致性备份。 |
-| 配套库 | `serde`／`serde_json` 处理序列化，`calamine`／`rust_xlsxwriter` 处理 Excel，`reqwest`／`tokio` 处理可选 AI 请求。 |
+| 配套库 | `serde`／`serde_json` 处理序列化，`calamine`／`rust_xlsxwriter` 处理 Excel，`reqwest`／`tokio` 处理可选 AI 请求，`argon2`／`getrandom`／`zeroize` 处理本地应用锁哈希、安全随机恢复码与内存清理。 |
 
 计划中，`src/` 放置页面、组件和 IPC 调用适配；`src-tauri/src/` 按 `commands`、`domain`、`service`、`db`、`engine`、`excel`、`ai` 分工，`src-tauri/migrations/` 保存本项目的 SQLite 迁移，`src-tauri/capabilities/` 声明最小权限。文件读取和写入只覆盖用户所选文件及应用数据目录所需操作，不给界面通用文件系统或 SQL 执行能力。
 

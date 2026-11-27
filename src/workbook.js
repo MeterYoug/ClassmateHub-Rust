@@ -1,9 +1,11 @@
+import { localizeMessage } from './i18n.js'
+
 export function downloadWorkbook(data, filename) {
   const blob = new Blob([new Uint8Array(data)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = filename
+  link.download = localizeMessage(filename)
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

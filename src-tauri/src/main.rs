@@ -11,13 +11,15 @@ mod recovery;
 mod ai;
 mod ai_settings;
 mod about;
+mod localization;
+mod app_lock;
 #[cfg(test)]
 mod ipc_tests;
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 use std::sync::{Mutex, MutexGuard, atomic::{AtomicBool, Ordering}};
-use tauri::{Manager, State};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 
 struct Database(Mutex<Connection>, AtomicBool);
 
@@ -157,24 +159,71 @@ fn preview_scores(database: State<'_, Database>, exam_id: i64, bytes: Vec<u8>) -
 }
 
 #[tauri::command]
-fn score_template(database: State<'_, Database>, exam_id: i64) -> Result<Vec<u8>, String> {
-    let connection = database.connection()?;
-    spreadsheet::score_template(&connection, exam_id)
+async fn score_template<R: Runtime>(
+    window: WebviewWindow<R>,
+    exam_id: i64,
+    locale: Option<String>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = {
+            let database = window.try_state::<Database>().ok_or("数据库锁不可用")?;
+            let connection = database.connection()?;
+            spreadsheet::score_template(&connection, exam_id)?
+        };
+        let locale = locale.as_deref();
+        let title = localization::dialog_text(locale, "另存为成绩导入模板");
+        let filename = localization::dialog_text(locale, "成绩导入模板.xlsx");
+        plan_export::save_export(&window, &bytes, "xlsx", title, filename)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn export_scores(database: State<'_, Database>, exam_id: i64, by_student_no: bool) -> Result<Vec<u8>, String> {
-    let connection = database.connection()?;
-    spreadsheet::score_workbook(&connection, exam_id, true, by_student_no)
+async fn export_scores<R: Runtime>(
+    window: WebviewWindow<R>,
+    exam_id: i64,
+    by_student_no: bool,
+    locale: Option<String>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = {
+            let database = window.try_state::<Database>().ok_or("数据库锁不可用")?;
+            let connection = database.connection()?;
+            spreadsheet::score_workbook(&connection, exam_id, true, by_student_no)?
+        };
+        let locale = locale.as_deref();
+        let title = localization::dialog_text(locale, "另存为成绩表");
+        let filename = localization::dialog_text(locale, "考试成绩.xlsx");
+        plan_export::save_export(&window, &bytes, "xlsx", title, filename)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn export_records(database: State<'_, Database>, resource: String, class_id: Option<i64>, ids: Vec<i64>) -> Result<Vec<u8>, String> {
-    let connection = database.connection()?;
-    let ids: std::collections::HashSet<_> = ids.into_iter().collect();
-    let mut records = database::list(&connection, &resource, class_id)?;
-    records.retain(|item| item["id"].as_i64().is_some_and(|id| ids.contains(&id)));
-    spreadsheet::records_workbook(&resource, &records)
+async fn export_records<R: Runtime>(
+    window: WebviewWindow<R>,
+    resource: String,
+    class_id: Option<i64>,
+    ids: Vec<i64>,
+    locale: Option<String>,
+    filename: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut records = {
+            let database = window.try_state::<Database>().ok_or("数据库锁不可用")?;
+            let connection = database.connection()?;
+            database::list(&connection, &resource, class_id)?
+        };
+        let ids: std::collections::HashSet<_> = ids.into_iter().collect();
+        records.retain(|item| item["id"].as_i64().is_some_and(|id| ids.contains(&id)));
+        let bytes = spreadsheet::records_workbook(&resource, &records)?;
+        let title = localization::dialog_text(locale.as_deref(), "另存为基础资料");
+        plan_export::save_export(&window, &bytes, "xlsx", title, &filename)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -205,12 +254,25 @@ fn save_subject_template(database: State<'_, Database>, subject: scores::Subject
 }
 
 fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![desktop_status, dashboard_summary, list_records, save_record, deactivate_records, save_layout, save_classroom_with_layout, copy_class, list_exams, save_exam, list_scores, sync_score_levels, save_scores, remove_score, preview_scores, score_template, export_scores, export_records, preview_students, import_students, student_template, list_subject_templates, save_subject_template,
+    let dispatch: fn(tauri::ipc::Invoke<R>) -> bool = tauri::generate_handler![desktop_status, dashboard_summary, list_records, save_record, deactivate_records, save_layout, save_classroom_with_layout, copy_class, list_exams, save_exam, list_scores, sync_score_levels, save_scores, remove_score, preview_scores, score_template, export_scores, export_records, preview_students, import_students, student_template, list_subject_templates, save_subject_template,
         plan_commands::inspect_plan_inputs, plan_commands::new_manual_plan, plan_commands::generate_plan, plan_commands::regenerate_plan, plan_commands::adjust_plan, plan_commands::list_plans, plan_commands::open_plan, plan_commands::save_plan, plan_commands::save_active_plan, plan_commands::activate_plan, plan_commands::copy_plan, plan_commands::plan_export_sheet, plan_commands::export_plan_workbook, plan_commands::export_plan_image,
         recovery::recovery_status, recovery::export_backup, recovery::inspect_backup, recovery::apply_backup, recovery::discard_backup, recovery::retry_rollback,
         ai::ai_settings, ai::save_ai_settings, ai::test_ai_connection, ai::list_ai_profiles, ai::save_ai_profile,
         ai::change_ai_profile, ai::test_ai_profile, ai::fetch_ai_models, ai::prepare_ai, ai::run_ai, ai::cancel_ai, ai::fallback_ai,
-        about::about_info, about::check_app_update, about::download_update_asset])
+        about::about_info, about::check_app_update, about::download_update_asset,
+        app_lock::app_lock_status, app_lock::unlock_app, app_lock::recover_app_lock,
+        app_lock::lock_app, app_lock::setup_app_lock, app_lock::change_app_lock_password,
+        app_lock::regenerate_recovery_code, app_lock::update_app_lock_settings, app_lock::disable_app_lock];
+    builder.invoke_handler(move |invoke: tauri::ipc::Invoke<R>| {
+        let public = matches!(invoke.message.command(), "app_lock_status" | "unlock_app" | "recover_app_lock");
+        if !public {
+            if let Err(error) = app_lock::ensure_unlocked(invoke.message.webview().app_handle()) {
+                invoke.resolver.reject(error);
+                return true;
+            }
+        }
+        dispatch(invoke)
+    })
 }
 
 fn main() {
@@ -219,6 +281,7 @@ fn main() {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let storage = recovery::Storage::new(directory.clone())?;
+            app.manage(app_lock::AppLock::load(directory.clone()));
             let (connection, blocked) = storage.open().map_err(std::io::Error::other)?;
             app.manage(Database(Mutex::new(connection), AtomicBool::new(blocked)));
             app.manage(storage);

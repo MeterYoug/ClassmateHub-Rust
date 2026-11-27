@@ -1,9 +1,9 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { elementLocale, languages, locale, localizeMessage, setLocale, t } from './i18n.js'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ElButton, ElConfigProvider, ElIcon, ElOption, ElSelect, ElTag } from 'element-plus'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import {
   Cpu,
   DataAnalysis,
@@ -11,14 +11,17 @@ import {
   Grid,
   House,
   InfoFilled,
+  Lock,
   UploadFilled,
 } from '@element-plus/icons-vue'
 import Management from './Management.vue'
 import Scores from './Scores.vue'
 import Seating from './Seating.vue'
 import DataTools from './DataTools.vue'
+import LockScreen from './LockScreen.vue'
+import SecurityLock from './SecurityLock.vue'
 import { termLabel } from './classOptions.js'
-import { confirmAction } from './ui.js'
+import { confirmAction, notifyError } from './ui.js'
 
 const desktopStatus = ref('正在连接本地服务…')
 const serviceConnected = ref(false)
@@ -30,7 +33,17 @@ const classes = ref([])
 const selectedClassId = ref(null)
 const activePage = ref(null)
 const main = ref(null)
+const desktop = isTauri()
+const appLock = ref(null)
+const workspaceReady = ref(false)
+const checkingLock = ref(false)
+const startupError = ref('')
+const lockPending = ref(false)
+const closeBlocked = ref(false)
+const activityEvents = ['pointerdown', 'keydown', 'wheel', 'touchstart']
 const navigationBlocked = computed(() => activePage.value?.isBusy() ?? false)
+let idleTimer
+let deferredRefresh
 let unlistenClose
 let closingPrompt = false
 
@@ -41,6 +54,7 @@ const pages = [
   { id: 'seating', label: '智能排座', icon: Grid },
   { id: 'backup', label: '备份与恢复', icon: UploadFilled },
   { id: 'ai', label: 'AI 设置', icon: Cpu },
+  { id: 'security', label: '应用锁', icon: Lock },
   { id: 'about', label: '关于与更新', icon: InfoFilled },
 ]
 
@@ -74,6 +88,7 @@ const currentTopbar = computed(() => {
     seating: { title: '智能排座', subtitle: '本地规则引擎与可选 AI 排座，支持拖拽调座与快照历史' },
     backup: { title: '备份与恢复', subtitle: 'SQLite 一致性整库备份与中断回退保护' },
     ai: { title: 'AI 设置', subtitle: '可选联网排座配置，按次确认脱敏字段' },
+    security: { title: '应用锁', subtitle: '' },
     about: { title: '关于与更新', subtitle: '版本信息、开源许可与 GitHub Releases 在线更新检查' },
   }
   return map[page.value] ?? { title: '班伴', subtitle: '' }
@@ -130,20 +145,30 @@ const readiness = computed(() => {
   }
 })
 
+function deferRefreshWhileLocked(preferClassId) {
+  if (!appLock.value?.locked) return false
+  deferredRefresh = preferClassId ?? deferredRefresh ?? null
+  return true
+}
+
 async function refreshGlobalData(preferClassId = null) {
+  if (deferRefreshWhileLocked(preferClassId)) return
   try {
     desktopStatus.value = await invoke('desktop_status')
     serviceConnected.value = true
   } catch {
+    if (deferRefreshWhileLocked(preferClassId)) return
     desktopStatus.value = '本地服务未连接'
     serviceConnected.value = false
     return
   }
+  if (deferRefreshWhileLocked(preferClassId)) return
   try {
     const [summary, allClasses] = await Promise.all([
       invoke('dashboard_summary'),
       invoke('list_records', { resource: 'classes', classId: null }),
     ])
+    if (deferRefreshWhileLocked(preferClassId)) return
     dashboard.value = summary
     classes.value = allClasses
 
@@ -153,6 +178,7 @@ async function refreshGlobalData(preferClassId = null) {
       selectedClassId.value = (allClasses.find(item => item.active) ?? allClasses[0])?.id ?? null
     }
   } catch {
+    if (deferRefreshWhileLocked(preferClassId)) return
     dashboard.value = []
     classes.value = []
   }
@@ -172,7 +198,7 @@ async function confirmLeave(message) {
 async function handleGlobalClassChange(nextId) {
   const normalized = nextId ? Number(nextId) : null
   if (normalized === selectedClassId.value || navigationBlocked.value) return
-  if (!(await confirmLeave('切换班级会放弃当前页面未保存的修改，确定继续吗？'))) return
+  if (!(await confirmLeave('切换班级会放弃当前页面未保存的修改，确定继续吗？')) || appLock.value?.locked) return
   selectedClassId.value = normalized
 }
 
@@ -183,7 +209,7 @@ async function navigate(target, section = 'classes', importStudents = false) {
     return
   }
   if (navigationBlocked.value) return
-  if (!(await confirmLeave('有未保存的修改，确定放弃并切换页面吗？'))) return
+  if (!(await confirmLeave('有未保存的修改，确定放弃并切换页面吗？')) || appLock.value?.locked) return
 
   if (target === 'management') managementSection.value = section
   openImport.value = importStudents
@@ -193,12 +219,84 @@ async function navigate(target, section = 'classes', importStudents = false) {
   if (target === 'home') void refreshGlobalData()
 }
 
+function enterWorkspace(status) {
+  appLock.value = status
+  if (!status.locked) closeBlocked.value = false
+  if (status.locked || (workspaceReady.value && deferredRefresh === undefined)) return
+  workspaceReady.value = true
+  const preferClassId = deferredRefresh
+  deferredRefresh = undefined
+  return refreshGlobalData(preferClassId)
+}
+
+async function checkAppLock() {
+  if (checkingLock.value) return
+  checkingLock.value = true
+  let status
+  try {
+    status = desktop ? await invoke('app_lock_status') : {
+      enabled: false, locked: false, idle_timeout_minutes: 0,
+    }
+  } catch (error) {
+    startupError.value = error?.message ?? String(error)
+    return
+  } finally {
+    checkingLock.value = false
+  }
+  startupError.value = ''
+  return enterWorkspace(status)
+}
+
+function updateLockSettings(status) {
+  if (!appLock.value.locked) appLock.value = status
+}
+
+async function lockWorkspace() {
+  if (lockPending.value || !appLock.value?.enabled || appLock.value.locked) return
+  lockPending.value = true
+  clearTimeout(idleTimer)
+  try {
+    appLock.value = await invoke('lock_app')
+  } catch (error) {
+    closeBlocked.value = false
+    notifyError(error)
+    scheduleIdleLock()
+  } finally {
+    lockPending.value = false
+  }
+}
+
+function scheduleIdleLock() {
+  clearTimeout(idleTimer)
+  const status = appLock.value
+  if (status?.enabled && !status.locked && status.idle_timeout_minutes > 0) {
+    idleTimer = setTimeout(lockWorkspace, status.idle_timeout_minutes * 60_000)
+  }
+}
+
+function lockShortcut(event) {
+  if (!appLock.value?.enabled || appLock.value.locked || event.repeat || event.isComposing) return
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === 'KeyL') {
+    event.preventDefault()
+    void lockWorkspace()
+  }
+}
+
+watch(appLock, scheduleIdleLock)
+
 onMounted(async () => {
-  if (isTauri()) {
+  const startup = checkAppLock()
+  if (desktop) {
+    for (const event of activityEvents) window.addEventListener(event, scheduleIdleLock, { capture: true, passive: true })
+    window.addEventListener('keydown', lockShortcut, { capture: true })
     const appWindow = getCurrentWindow()
     unlistenClose = await appWindow.onCloseRequested(async event => {
-      if (!activePage.value?.hasUnsavedChanges()) return
+      if (!workspaceReady.value || !activePage.value?.hasUnsavedChanges()) return
       event.preventDefault()
+      if (appLock.value?.locked || lockPending.value) {
+        closeBlocked.value = true
+        return
+      }
       if (closingPrompt) return
       closingPrompt = true
       try {
@@ -209,28 +307,40 @@ onMounted(async () => {
           type: 'warning',
           danger: true,
         })
-        if (confirmed) await appWindow.destroy()
+        if (confirmed && !appLock.value?.locked && !lockPending.value) await appWindow.destroy()
       } finally {
         closingPrompt = false
       }
     })
   }
-  await refreshGlobalData()
+  await startup
 })
 
-onBeforeUnmount(() => unlistenClose?.())
+onBeforeUnmount(() => {
+  clearTimeout(idleTimer)
+  if (desktop) {
+    for (const event of activityEvents) window.removeEventListener(event, scheduleIdleLock, { capture: true })
+    window.removeEventListener('keydown', lockShortcut, { capture: true })
+  }
+  unlistenClose?.()
+})
 </script>
 
 <template>
-  <ElConfigProvider :locale="zhCn">
-    <div class="app-shell">
+  <ElConfigProvider :locale="elementLocale()">
+    <div
+      v-if="workspaceReady"
+      v-show="!appLock.locked"
+      :inert="appLock.locked"
+      class="app-shell"
+    >
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-icon">班</span>
           <span>班伴<small>CLASSMATE HUB</small></span>
         </div>
-        <div class="nav-label">工作空间</div>
-        <nav class="workspace-nav" aria-label="工作空间">
+        <div class="nav-label">{{ t('工作空间') }}</div>
+        <nav class="workspace-nav" :aria-label="t('工作空间')">
           <template v-for="item in pages" :key="item.id">
             <button
               v-if="item.id === 'management'"
@@ -243,7 +353,7 @@ onBeforeUnmount(() => unlistenClose?.())
             >
               <span class="nav-group-left">
                 <ElIcon class="nav-icon" :size="16"><component :is="item.icon" /></ElIcon>
-                <span>{{ item.label }}</span>
+                <span>{{ t(item.label) }}</span>
               </span>
               <span class="nav-chevron" aria-hidden="true"></span>
             </button>
@@ -256,7 +366,7 @@ onBeforeUnmount(() => unlistenClose?.())
               @click="navigate(item.id)"
             >
               <ElIcon class="nav-icon" :size="16"><component :is="item.icon" /></ElIcon>
-              <span>{{ item.label }}</span>
+              <span>{{ t(item.label) }}</span>
             </button>
             <div
               v-if="item.id === 'management'"
@@ -273,7 +383,7 @@ onBeforeUnmount(() => unlistenClose?.())
                 :disabled="navigationBlocked"
                 @click="navigate('management', section.id)"
               >
-                {{ section.label }}
+                {{ t(section.label) }}
               </button>
             </div>
           </template>
@@ -283,30 +393,49 @@ onBeforeUnmount(() => unlistenClose?.())
       <div class="workspace-column">
         <header class="topbar">
           <div class="topbar-title">
-            <h1>{{ currentTopbar.title }}</h1>
-            <span v-if="currentTopbar.subtitle" class="topbar-subtitle">{{ currentTopbar.subtitle }}</span>
+            <h1>{{ t(currentTopbar.title) }}</h1>
+            <span v-if="currentTopbar.subtitle" class="topbar-subtitle">{{ t(currentTopbar.subtitle) }}</span>
           </div>
           <div class="topbar-right">
+            <ElButton
+              v-if="appLock.enabled && !appLock.locked"
+              class="lock-workspace-button"
+              :icon="Lock"
+              :loading="lockPending"
+              size="small"
+              aria-keyshortcuts="Control+Shift+L Meta+Shift+L"
+              @click="lockWorkspace"
+            >{{ t('锁定') }}</ElButton>
             <div v-if="showGlobalClassPicker" class="global-class-picker">
-              <span>当前班级</span>
+              <span>{{ t('当前班级') }}</span>
               <ElSelect
                 :model-value="selectedClassId"
+                :aria-label="t('当前班级')"
                 :disabled="navigationBlocked || !classes.length"
-                placeholder="暂无班级"
+                :placeholder="t('暂无班级')"
                 size="default"
                 @change="handleGlobalClassChange"
               >
                 <ElOption
                   v-for="item in classes"
                   :key="item.id"
-                  :label="`${item.name} · ${termLabel(item.term)}${item.active ? '' : '（停用）'}`"
+                  :label="`${item.name} · ${t(termLabel(item.term))}${item.active ? '' : t('（停用）')}`"
                   :value="item.id"
                 />
               </ElSelect>
             </div>
-            <span class="status-pill" :class="{ offline: !serviceConnected }">
-              <i></i>{{ desktopStatus }}
+            <span class="status-pill" :class="{ offline: !serviceConnected }" :title="localizeMessage(desktopStatus)" role="status">
+              <i aria-hidden="true"></i><span class="status-text">{{ localizeMessage(desktopStatus) }}</span>
             </span>
+            <ElSelect
+              class="language-picker"
+              :model-value="locale"
+              :aria-label="t('界面语言')"
+              size="small"
+              @change="setLocale"
+            >
+              <ElOption v-for="language in languages" :key="language.id" :label="language.name" :value="language.id" />
+            </ElSelect>
           </div>
         </header>
 
@@ -333,6 +462,15 @@ onBeforeUnmount(() => unlistenClose?.())
             :class-id="selectedClassId"
             :classes="classes"
           />
+          <SecurityLock
+            v-else-if="page === 'security'"
+            ref="activePage"
+            :status="appLock"
+            :desktop="desktop"
+            :locking="lockPending"
+            @status-change="updateLockSettings"
+            @lock="lockWorkspace"
+          />
           <DataTools
             v-else-if="page === 'backup' || page === 'ai' || page === 'about'"
             :key="page"
@@ -345,37 +483,37 @@ onBeforeUnmount(() => unlistenClose?.())
             <div class="hero">
               <div class="hero-body">
                 <div class="hero-top">
-                  <ElTag :type="readiness.tagType" effect="dark" round>{{ readiness.tagLabel }}</ElTag>
+                  <ElTag :type="readiness.tagType" effect="dark" round>{{ t(readiness.tagLabel) }}</ElTag>
                 </div>
-                <h2>{{ readiness.title }}</h2>
-                <p class="hero-desc">{{ readiness.description }}</p>
+                <h2>{{ localizeMessage(readiness.title) }}</h2>
+                <p class="hero-desc">{{ localizeMessage(readiness.description) }}</p>
                 <div v-if="dashboardClass" class="hero-metrics">
-                  <span class="metric-chip"><strong>{{ dashboardClass.students }}</strong>名学生</span>
-                  <span class="metric-chip"><strong>{{ dashboardClass.max_seats }}</strong>最大座位数</span>
-                  <span class="metric-chip"><strong>{{ dashboardClass.layouts }}</strong>可用布局</span>
-                  <span class="metric-chip"><strong>{{ dashboardClass.exams }}</strong>次考试</span>
-                  <span class="metric-chip"><strong>{{ dashboardClass.plans }}</strong>份方案</span>
+                  <span class="metric-chip"><strong>{{ dashboardClass.students }}</strong>{{ t('名学生') }}</span>
+                  <span class="metric-chip"><strong>{{ dashboardClass.max_seats }}</strong>{{ t('最大座位数') }}</span>
+                  <span class="metric-chip"><strong>{{ dashboardClass.layouts }}</strong>{{ t('可用布局') }}</span>
+                  <span class="metric-chip"><strong>{{ dashboardClass.exams }}</strong>{{ t('次考试') }}</span>
+                  <span class="metric-chip"><strong>{{ dashboardClass.plans }}</strong>{{ t('份方案') }}</span>
                 </div>
                 <div class="hero-actions">
                   <ElButton type="primary" size="large" @click="readiness.ctaTarget()">
-                    {{ readiness.ctaLabel }}
+                    {{ t(readiness.ctaLabel) }}
                   </ElButton>
                   <ElButton v-if="dashboardClass" size="large" @click="navigate('management', 'students', true)">
-                    导入学生
+                    {{ t('导入学生') }}
                   </ElButton>
                   <ElButton v-if="dashboardClass" size="large" @click="navigate('scores')">
-                    管理成绩
+                    {{ t('管理成绩') }}
                   </ElButton>
                   <ElButton v-if="dashboardClass && !readiness.ready" size="large" @click="navigate('seating')">
-                    进入排座页
+                    {{ t('进入排座页') }}
                   </ElButton>
                 </div>
               </div>
             </div>
 
             <div class="section-heading">
-              <h2>排座准备流程</h2>
-              <span>按步骤补齐资料，点击卡片直达对应模块</span>
+              <h2>{{ t('排座准备流程') }}</h2>
+              <span>{{ t('按步骤补齐资料，点击卡片直达对应模块') }}</span>
             </div>
 
             <ol class="steps">
@@ -384,7 +522,7 @@ onBeforeUnmount(() => unlistenClose?.())
                   <div class="step-head">
                     <span class="step-index">
                       <span class="step-badge">{{ step.index }}</span>
-                      {{ step.title }}
+                      {{ t(step.title) }}
                     </span>
                     <ElTag
                       v-if="step.count"
@@ -393,7 +531,7 @@ onBeforeUnmount(() => unlistenClose?.())
                       effect="light"
                       round
                     >
-                      {{ dashboardClass?.[step.count] ? '已就绪' : '待准备' }}
+                      {{ dashboardClass?.[step.count] ? t('已就绪') : t('待准备') }}
                     </ElTag>
                     <ElTag
                       v-else
@@ -402,15 +540,15 @@ onBeforeUnmount(() => unlistenClose?.())
                       effect="light"
                       round
                     >
-                      {{ classes.length ? `${classes.length} 个班级` : '待创建' }}
+                      {{ classes.length ? t('{0} 个班级', classes.length) : t('待创建') }}
                     </ElTag>
                   </div>
-                  <span class="step-desc">{{ step.description }}</span>
+                  <span class="step-desc">{{ t(step.description) }}</span>
                   <div class="step-foot">
-                    <span v-if="step.count && dashboardClass">当前：{{ dashboardClass[step.count] }} {{ step.unit }}</span>
-                    <span v-else-if="!step.count">管理学期、年级与科目</span>
-                    <span v-else>请先创建班级</span>
-                    <span>前往 →</span>
+                    <span v-if="step.count && dashboardClass">{{ t('当前：') }}{{ dashboardClass[step.count] }} {{ t(step.unit) }}</span>
+                    <span v-else-if="!step.count">{{ t('管理学期、年级与科目') }}</span>
+                    <span v-else>{{ t('请先创建班级') }}</span>
+                    <span>{{ t('前往 →') }}</span>
                   </div>
                 </button>
               </li>
@@ -419,5 +557,14 @@ onBeforeUnmount(() => unlistenClose?.())
         </main>
       </div>
     </div>
+    <LockScreen
+      v-if="appLock?.locked || startupError"
+      :status="appLock"
+      :startup-error="startupError"
+      :checking="checkingLock"
+      :close-blocked="closeBlocked"
+      @retry="checkAppLock"
+      @unlocked="enterWorkspace"
+    />
   </ElConfigProvider>
 </template>

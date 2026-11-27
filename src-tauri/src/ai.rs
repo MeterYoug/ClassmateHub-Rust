@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -287,7 +287,8 @@ pub enum RunResult {
     Cancelled,
 }
 
-async fn complete(
+async fn complete<R: Runtime>(
+    app: &AppHandle<R>,
     profile: &Profile,
     key: Option<String>,
     system: &str,
@@ -325,7 +326,7 @@ async fn complete(
     if let Some(key) = key {
         request = request.bearer_auth(key);
     }
-    let bytes = response_bytes(request).await?;
+    let bytes = response_bytes(app, request).await?;
     #[derive(Deserialize)]
     struct Response {
         choices: Vec<Choice>,
@@ -366,7 +367,7 @@ fn client(settings: &Settings) -> Result<Client, String> {
         .map_err(|_| "无法初始化 AI 网络连接".into())
 }
 
-async fn response_bytes(request: reqwest::RequestBuilder) -> Result<Vec<u8>, String> {
+async fn response_bytes<R: Runtime>(app: &AppHandle<R>, request: reqwest::RequestBuilder) -> Result<Vec<u8>, String> {
     let network_error = |error: reqwest::Error| {
         if error.is_timeout() {
             "AI 请求超时"
@@ -374,6 +375,7 @@ async fn response_bytes(request: reqwest::RequestBuilder) -> Result<Vec<u8>, Str
             "无法连接 AI 服务或响应连接中断"
         }
     };
+    crate::app_lock::ensure_unlocked(app)?;
     let mut response = request.send().await.map_err(network_error)?;
     if !response.status().is_success() {
         return Err(match response.status() {
@@ -390,6 +392,7 @@ async fn response_bytes(request: reqwest::RequestBuilder) -> Result<Vec<u8>, Str
         }
         bytes.extend_from_slice(&chunk);
     }
+    crate::app_lock::ensure_unlocked(app)?;
     Ok(bytes)
 }
 
@@ -409,14 +412,15 @@ pub fn save_ai_settings(
 }
 
 #[tauri::command]
-pub async fn test_ai_connection(ai: State<'_, AiState>) -> Result<(), String> {
+pub async fn test_ai_connection<R: Runtime>(app: AppHandle<R>, ai: State<'_, AiState>) -> Result<(), String> {
     let profile = ai.store.selected(None)?.ok_or("请先保存 AI 设置")?;
     let key = ai.store.key(profile.id, &profile.settings)?;
-    test_profile(&profile, key).await
+    test_profile(&app, &profile, key).await
 }
 
-async fn test_profile(profile: &Profile, key: Option<String>) -> Result<(), String> {
+async fn test_profile<R: Runtime>(app: &AppHandle<R>, profile: &Profile, key: Option<String>) -> Result<(), String> {
     complete(
+        app,
         profile,
         key,
         "Reply with a short confirmation.",
@@ -458,18 +462,18 @@ pub fn change_ai_profile(ai: State<'_, AiState>, id: u64, remove: bool) -> Resul
 }
 
 #[tauri::command]
-pub async fn test_ai_profile(ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<(), String> {
+pub async fn test_ai_profile<R: Runtime>(app: AppHandle<R>, ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<(), String> {
     let key = key_for_endpoint(key, &profile.settings.endpoint)?;
     profile.settings = profile.settings.checked()?;
     let key = match key {
         None if use_saved_key => ai.store.key(profile.id, &profile.settings)?,
         key => key,
     };
-    test_profile(&profile, key).await
+    test_profile(&app, &profile, key).await
 }
 
 #[tauri::command]
-pub async fn fetch_ai_models(ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<Vec<String>, String> {
+pub async fn fetch_ai_models<R: Runtime>(app: AppHandle<R>, ai: State<'_, AiState>, mut profile: Profile, key: Option<DraftKey>, use_saved_key: bool) -> Result<Vec<String>, String> {
     let key = key_for_endpoint(key, &profile.settings.endpoint)?;
     profile.settings.model = "model-discovery".into();
     let settings = profile.settings.checked()?;
@@ -484,7 +488,7 @@ pub async fn fetch_ai_models(ai: State<'_, AiState>, mut profile: Profile, key: 
     struct ModelList { data: Vec<Model> }
     #[derive(Deserialize)]
     struct Model { id: String }
-    let bytes = response_bytes(request).await?;
+    let bytes = response_bytes(&app, request).await?;
     let response: ModelList = serde_json::from_slice(&bytes).map_err(|_| "模型列表格式无效")?;
     let mut models: Vec<_> = response.data.into_iter().map(|model| model.id)
         .filter(|id| !id.trim().is_empty() && id.len() <= 100 && !id.chars().any(char::is_control)).collect();
@@ -548,7 +552,7 @@ pub fn prepare_ai(
 }
 
 #[tauri::command]
-pub async fn run_ai(ai: State<'_, AiState>, id: String) -> Result<RunResult, String> {
+pub async fn run_ai<R: Runtime>(app: AppHandle<R>, ai: State<'_, AiState>, id: String) -> Result<RunResult, String> {
     let (input, profile, receiver) = {
         let mut pending = ai.pending.lock().map_err(|_| "AI 状态不可用")?;
         let attempt = pending
@@ -566,7 +570,7 @@ pub async fn run_ai(ai: State<'_, AiState>, id: String) -> Result<RunResult, Str
     let request = async {
         let body = input.message()?;
         let key = ai.store.key(profile.id, &profile.settings)?;
-        let response = complete(&profile, key, PROMPT, body).await?;
+        let response = complete(&app, &profile, key, PROMPT, body).await?;
         input.accept(&response)
     };
     let result = tokio::select! {

@@ -272,6 +272,14 @@ fn copy_database(source: &Connection, target: &mut Connection) -> Result<(), Str
 }
 
 fn write_backup(source: &Connection, path: &Path) -> Result<(), String> {
+    write_backup_checked(source, path, |file| file.persist(path).map_err(error))
+}
+
+fn write_backup_checked(
+    source: &Connection,
+    path: &Path,
+    persist: impl FnOnce(NamedTempFile) -> Result<File, String>,
+) -> Result<(), String> {
     let directory = path.parent().ok_or("保存路径无效")?;
     let file = NamedTempFile::new_in(directory).map_err(error)?;
     let mut snapshot = Connection::open(file.path()).map_err(error)?;
@@ -285,7 +293,7 @@ fn write_backup(source: &Connection, path: &Path) -> Result<(), String> {
     validate(&snapshot, database::VERSION, true)?;
     snapshot.close().map_err(|(_, e)| error(e))?;
     file.as_file().sync_all().map_err(error)?;
-    file.persist(path).map_err(error)?;
+    persist(file)?;
     Ok(())
 }
 
@@ -385,17 +393,21 @@ pub fn recovery_status(
 pub async fn export_backup<R: tauri::Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
+    locale: Option<String>,
 ) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let locale = locale.as_deref();
+        let name = crate::localization::dialog_text(locale, "班伴备份");
         let Some(path) = rfd::FileDialog::new()
             .set_parent(&window)
-            .set_title("导出班伴备份")
-            .set_file_name(format!("班伴备份.{EXTENSION}"))
-            .add_filter("班伴备份", &[EXTENSION])
+            .set_title(crate::localization::dialog_text(locale, "导出班伴备份"))
+            .set_file_name(format!("{name}.{EXTENSION}"))
+            .add_filter(name, &[EXTENSION])
             .save_file()
         else {
             return Ok(false);
         };
+        crate::app_lock::ensure_unlocked(&app)?;
         let storage = app.state::<Storage>();
         let parent = path
             .parent()
@@ -407,7 +419,12 @@ pub async fn export_backup<R: tauri::Runtime>(
         {
             return Err("请选择应用数据目录之外的班伴备份文件".into());
         }
-        write_backup(&*app.state::<Database>().connection()?, &path)?;
+        let database = app.state::<Database>();
+        let connection = database.connection()?;
+        crate::app_lock::ensure_unlocked(&app)?;
+        write_backup_checked(&connection, &path, |file| {
+            crate::app_lock::with_unlocked(&app, || file.persist(&path).map_err(error))
+        })?;
         Ok(true)
     })
     .await
@@ -418,16 +435,19 @@ pub async fn export_backup<R: tauri::Runtime>(
 pub async fn inspect_backup<R: tauri::Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
+    locale: Option<String>,
 ) -> Result<Option<Summary>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let locale = locale.as_deref();
         let Some(path) = rfd::FileDialog::new()
             .set_parent(&window)
-            .set_title("选择班伴备份")
-            .add_filter("班伴备份", &[EXTENSION])
+            .set_title(crate::localization::dialog_text(locale, "选择班伴备份"))
+            .add_filter(crate::localization::dialog_text(locale, "班伴备份"), &[EXTENSION])
             .pick_file()
         else {
             return Ok(None);
         };
+        crate::app_lock::ensure_unlocked(&app)?;
         app.state::<Storage>()
             .inspect(&app.state::<Database>(), &path)
             .map(Some)
@@ -442,6 +462,7 @@ pub async fn apply_backup<R: tauri::Runtime>(
     token: String,
 ) -> Result<Outcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::app_lock::ensure_unlocked(&app)?;
         app.state::<Storage>()
             .restore(&app.state::<Database>(), &token)
     })
@@ -463,6 +484,7 @@ pub async fn retry_rollback<R: tauri::Runtime>(app: AppHandle<R>) -> Result<(), 
     tauri::async_runtime::spawn_blocking(move || {
         let database = app.state::<Database>();
         let mut connection = database.0.lock().map_err(error)?;
+        crate::app_lock::ensure_unlocked(&app)?;
         if !database.1.load(Ordering::Acquire) {
             return Err("当前没有中断的恢复".into());
         }

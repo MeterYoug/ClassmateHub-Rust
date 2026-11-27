@@ -1,4 +1,5 @@
 <script setup>
+import { locale, localizeMessage, t } from './i18n.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -174,7 +175,7 @@ const comparisonChanges = computed(() => {
       value.assignments.map(item => {
         const position = positions.get(item.position_id)
         const room = value.snapshot.classroom_name
-        return [item.student_id, position ? `${room} · ${position.row}排${position.column}座` : '未入座']
+        return [item.student_id, position ? t('{0} · {1}排{2}座', room, position.row, position.column) : t('未入座')]
       }),
     )
   }
@@ -186,8 +187,8 @@ const comparisonChanges = computed(() => {
   return Array.from(students, ([id, name]) => ({
     id,
     name,
-    before: before.get(id) ?? '未入座',
-    after: after.get(id) ?? '未入座',
+    before: before.get(id) ?? t('未入座'),
+    after: after.get(id) ?? t('未入座'),
   })).filter(item => item.before !== item.after)
 })
 
@@ -620,12 +621,14 @@ async function exportFile(format) {
     const options = { id: plan.value.id, teacher: teacher.value }
     let saved
     if (format === 'xlsx') {
-      saved = await invoke('export_plan_workbook', options)
+      saved = await invoke('export_plan_workbook', { ...options, locale: locale.value })
     } else {
       const sheet = await invoke('plan_export_sheet', options)
-      saved = await invoke('export_plan_image', await renderPlan(sheet, format))
+      saved = await invoke('export_plan_image', await renderPlan(sheet, format), {
+        headers: { 'x-classmatehub-locale': locale.value },
+      })
     }
-    if (saved) notifySuccess(`座位表已导出（${options.teacher ? '教师版' : '学生版'}）`)
+    if (saved) notifySuccess(t('座位表已导出（{0}）', t(options.teacher ? '教师版' : '学生版')))
   })
 }
 
@@ -641,9 +644,9 @@ function formatTime(value) {
 }
 
 function cellLabel(cell) {
-  const label = `第 ${cell.row} 排第 ${cell.column} 座`
-  const content = cell.student?.name ?? ({ seat: '空座', aisle: '过道', unavailable: '不可用' }[cell.position?.kind] ?? '未设置')
-  return label + '，' + content + (cell.assignment?.locked ? '（锁定）' : '')
+  const label = t('第 {0} 排第 {1} 座', cell.row, cell.column)
+  const content = cell.student?.name ?? t({ seat: '空座', aisle: '过道', unavailable: '不可用' }[cell.position?.kind] ?? '未设置')
+  return t('{0}，{1}', label, content) + (cell.assignment?.locked ? t('（锁定）') : '')
 }
 
 watch(
@@ -671,7 +674,7 @@ onMounted(() =>
   <div class="seating-page">
     <div v-if="!classId" class="page-container">
       <div class="page-card">
-        <ElEmpty description="请先在基础资料中创建班级，或在顶部选择一个班级" />
+        <ElEmpty :description="t('请先在基础资料中创建班级，或在顶部选择一个班级')" />
       </div>
     </div>
 
@@ -679,80 +682,80 @@ onMounted(() =>
       <div class="seating-toolbar">
         <div class="toolbar-left">
           <template v-if="plan">
-            <ElButton :icon="ArrowLeft" :disabled="busy" @click="backToList">返回</ElButton>
+            <ElButton :icon="ArrowLeft" :disabled="busy" @click="backToList">{{ t('返回') }}</ElButton>
             <span class="toolbar-divider" aria-hidden="true"></span>
             <div v-if="editable" class="plan-name-wrap">
-              <span class="form-label is-required">方案名称</span>
+              <span class="form-label is-required">{{ t('方案名称') }}</span>
               <ElInput
                 :model-value="plan.name"
                 maxlength="100"
                 :disabled="busy"
-                placeholder="请输入方案名称（必填）"
+                :placeholder="t('请输入方案名称（必填）')"
                 :class="{ 'is-field-error': !!planNameError }"
                 style="width: 220px"
                 @update:model-value="plan.name = $event; dirty = true; if ($event.trim()) planNameError = ''"
               />
             </div>
             <strong v-else class="plan-title">{{ plan.name }}</strong>
-            <ElTag :type="planStatusTagType(plan)" effect="dark" size="small">{{ planStatus(plan) }}</ElTag>
+            <ElTag :type="planStatusTagType(plan)" effect="dark" size="small">{{ t(planStatus(plan)) }}</ElTag>
             <ElTag :type="plan.source === 'ai' ? 'primary' : 'info'" effect="plain" size="small">
-              {{ plan.source === 'ai' ? 'AI 排座' : '智能排座' }}
+              {{ plan.source === 'ai' ? t('AI 排座') : t('智能排座') }}
             </ElTag>
-            <ElTag v-if="dirty" type="warning" effect="light" size="small">未保存</ElTag>
+            <ElTag v-if="dirty" type="warning" effect="light" size="small">{{ t('未保存') }}</ElTag>
             <span class="plan-meta">{{ plan.snapshot.classroom_name }}</span>
           </template>
           <template v-else>
-            <strong class="plan-title">排座方案列表</strong>
-            <ElTag type="info" effect="plain" size="small">共 {{ history.length }} 份方案</ElTag>
+            <strong class="plan-title">{{ t('排座方案列表') }}</strong>
+            <ElTag type="info" effect="plain" size="small">{{ t('共') }} {{ history.length }} {{ t('份方案') }}</ElTag>
           </template>
         </div>
 
         <div class="toolbar-right">
           <template v-if="plan">
-            <ElButton :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">新建方案</ElButton>
+            <ElButton :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">{{ t('新建方案') }}</ElButton>
             <template v-if="editable && !editingActive">
-              <ElTooltip content="随机更换排座种子重新生成，保持已锁定的座位不动" placement="bottom">
-                <ElButton :icon="Refresh" :loading="busy" @click="shuffleBatch">换一批</ElButton>
+              <ElTooltip :content="t('随机更换排座种子重新生成，保持已锁定的座位不动')" placement="bottom">
+                <ElButton :icon="Refresh" :loading="busy" @click="shuffleBatch">{{ t('换一批') }}</ElButton>
               </ElTooltip>
-              <ElButton :icon="MagicStick" :disabled="busy" @click="prepareAi(true)">AI 重排</ElButton>
-              <ElButton :loading="busy" @click="save(false)">保存草稿</ElButton>
+              <ElButton :icon="MagicStick" :disabled="busy" @click="prepareAi(true)">{{ t('AI 重排') }}</ElButton>
+              <ElButton :loading="busy" @click="save(false)">{{ t('保存草稿') }}</ElButton>
               <ElButton type="primary" :loading="busy" :disabled="!plan.assignments.length" @click="save(true)">
-                确认启用
+                {{ t('确认启用') }}
               </ElButton>
             </template>
             <template v-else-if="editingActive">
-              <ElButton :disabled="busy" @click="cancelActiveEdit">取消编辑</ElButton>
+              <ElButton :disabled="busy" @click="cancelActiveEdit">{{ t('取消编辑') }}</ElButton>
               <ElButton type="primary" :loading="busy" :disabled="!dirty || !plan.assignments.length" @click="saveActive">
-                保存调整
+                {{ t('保存调整') }}
               </ElButton>
             </template>
             <template v-else>
               <ElButton v-if="plan.confirmed && !plan.archived" type="primary" :disabled="busy" @click="editingActive = true">
-                编辑已启用方案
+                {{ t('编辑已启用方案') }}
               </ElButton>
-              <ElButton v-if="plan.archived" type="primary" :loading="busy" @click="activate()">重新启用</ElButton>
-              <ElButton v-if="plan.id" :icon="CopyDocument" :disabled="busy || dirty" @click="copy()">复制为草稿</ElButton>
+              <ElButton v-if="plan.archived" type="primary" :loading="busy" @click="activate()">{{ t('重新启用') }}</ElButton>
+              <ElButton v-if="plan.id" :icon="CopyDocument" :disabled="busy || dirty" @click="copy()">{{ t('复制为草稿') }}</ElButton>
             </template>
 
             <ElDropdown trigger="click" :disabled="busy || dirty || !plan.id" @command="exportFile">
               <ElButton :icon="Download" :disabled="busy || dirty || !plan.id">
-                导出<ElIcon class="el-icon--right"><ArrowDown /></ElIcon>
+                {{ t('导出') }}<ElIcon class="el-icon--right"><ArrowDown /></ElIcon>
               </ElButton>
               <template #dropdown>
                 <ElDropdownMenu>
-                  <ElDropdownItem command="png">导出 PNG 图片（{{ teacher ? '教师版' : '学生版' }}）</ElDropdownItem>
-                  <ElDropdownItem command="xlsx">导出 Excel 表格（{{ teacher ? '教师版' : '学生版' }}）</ElDropdownItem>
-                  <ElDropdownItem command="pdf">导出横向 A4 PDF（{{ teacher ? '教师版' : '学生版' }}）</ElDropdownItem>
+                  <ElDropdownItem command="png">{{ t('导出 PNG 图片（') }}{{ teacher ? t('教师版') : t('学生版') }}）</ElDropdownItem>
+                  <ElDropdownItem command="xlsx">{{ t('导出 Excel 表格（') }}{{ teacher ? t('教师版') : t('学生版') }}）</ElDropdownItem>
+                  <ElDropdownItem command="pdf">{{ t('导出横向 A4 PDF（') }}{{ teacher ? t('教师版') : t('学生版') }}）</ElDropdownItem>
                 </ElDropdownMenu>
               </template>
             </ElDropdown>
             <ElButton text @click="inspectorOpen = !inspectorOpen">
-              {{ inspectorOpen ? '收起侧栏' : '展开侧栏' }}
+              {{ inspectorOpen ? t('收起侧栏') : t('展开侧栏') }}
             </ElButton>
           </template>
           <template v-else>
-            <ElButton v-if="rooms.length && history.length" :loading="busy" @click="generate(false)">一键智能排座</ElButton>
-            <ElButton type="primary" :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">新建方案</ElButton>
+            <ElButton v-if="rooms.length && history.length" :loading="busy" @click="generate(false)">{{ t('一键智能排座') }}</ElButton>
+            <ElButton type="primary" :icon="Plus" :disabled="busy || !rooms.length" @click="generateDialog = true">{{ t('新建方案') }}</ElButton>
           </template>
         </div>
       </div>
@@ -765,11 +768,11 @@ onMounted(() =>
               type="warning"
               show-icon
               :closable="false"
-              title="生成前数据检查提醒"
+              :title="t('生成前数据检查提醒')"
               style="margin-bottom: 12px"
             >
               <ul class="warn-list">
-                <li v-for="warning in inputWarnings" :key="warning">{{ warning }}</li>
+                <li v-for="warning in inputWarnings" :key="warning">{{ localizeMessage(warning) }}</li>
               </ul>
             </ElAlert>
 
@@ -778,15 +781,15 @@ onMounted(() =>
                 <ElInput
                   v-model="historySearch"
                   clearable
-                  placeholder="搜索方案名称"
+                  :placeholder="t('搜索方案名称')"
                   :prefix-icon="Search"
                   style="width: 240px"
                 />
                 <ElRadioGroup v-model="historyStatus">
-                  <ElRadioButton value="">全部</ElRadioButton>
-                  <ElRadioButton value="已启用">已启用</ElRadioButton>
-                  <ElRadioButton value="草稿">草稿</ElRadioButton>
-                  <ElRadioButton value="已归档">已归档</ElRadioButton>
+                  <ElRadioButton value="">{{ t('全部') }}</ElRadioButton>
+                  <ElRadioButton value="已启用">{{ t('已启用') }}</ElRadioButton>
+                  <ElRadioButton value="草稿">{{ t('草稿') }}</ElRadioButton>
+                  <ElRadioButton value="已归档">{{ t('已归档') }}</ElRadioButton>
                 </ElRadioGroup>
               </div>
 
@@ -799,48 +802,48 @@ onMounted(() =>
                 row-class-name="plan-list-row"
                 @row-dblclick="openHistoryItem"
               >
-                <ElTableColumn label="方案名称" min-width="220">
+                <ElTableColumn :label="t('方案名称')" min-width="220">
                   <template #default="{ row }">
                     <button type="button" class="plan-name-link" :disabled="busy" @click="openHistoryItem(row)">
                       {{ row.name }}
                     </button>
                   </template>
                 </ElTableColumn>
-                <ElTableColumn label="状态" width="110" align="center">
+                <ElTableColumn :label="t('状态')" width="110" align="center">
                   <template #default="{ row }">
-                    <ElTag :type="planStatusTagType(row)" effect="dark" size="small">{{ planStatus(row) }}</ElTag>
+                    <ElTag :type="planStatusTagType(row)" effect="dark" size="small">{{ t(planStatus(row)) }}</ElTag>
                   </template>
                 </ElTableColumn>
-                <ElTableColumn label="排座方式" width="120" align="center">
+                <ElTableColumn :label="t('排座方式')" width="120" align="center">
                   <template #default="{ row }">
                     <ElTag :type="row.source === 'ai' ? 'primary' : 'info'" effect="plain" size="small">
-                      {{ row.source === 'ai' ? 'AI 排座' : '智能排座' }}
+                      {{ row.source === 'ai' ? t('AI 排座') : t('智能排座') }}
                     </ElTag>
                   </template>
                 </ElTableColumn>
-                <ElTableColumn label="更新时间" width="175">
+                <ElTableColumn :label="t('更新时间')" width="175">
                   <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
                 </ElTableColumn>
-                <ElTableColumn label="操作" width="270" fixed="right">
+                <ElTableColumn :label="t('操作')" width="270" fixed="right">
                   <template #default="{ row }">
                     <div class="action-group plan-row-actions">
-                      <ElButton size="small" type="primary" plain :disabled="busy" @click="openHistoryItem(row)">打开</ElButton>
-                      <ElButton v-if="row.archived" size="small" :disabled="busy" @click="activate(row.id, false)">重新启用</ElButton>
-                      <ElButton size="small" :disabled="busy" @click="copy(row.id)">复制为草稿</ElButton>
+                      <ElButton size="small" type="primary" plain :disabled="busy" @click="openHistoryItem(row)">{{ t('打开') }}</ElButton>
+                      <ElButton v-if="row.archived" size="small" :disabled="busy" @click="activate(row.id, false)">{{ t('重新启用') }}</ElButton>
+                      <ElButton size="small" :disabled="busy" @click="copy(row.id)">{{ t('复制为草稿') }}</ElButton>
                     </div>
                   </template>
                 </ElTableColumn>
               </ElTable>
-              <ElEmpty v-else description="暂无符合条件的排座方案" />
+              <ElEmpty v-else :description="t('暂无符合条件的排座方案')" />
             </div>
           </div>
 
           <div v-else-if="!plan" class="empty-canvas page-card">
-            <ElEmpty :description="rooms.length ? '当前班级还没有排座方案，点击下方按钮立即生成' : '当前班级暂无可用教室，请先在「基础资料 → 教室管理」配置布局'">
+            <ElEmpty :description="rooms.length ? t('当前班级还没有排座方案，点击下方按钮立即生成') : t('当前班级暂无可用教室，请先在「基础资料 → 教室管理」配置布局')">
               <div v-if="rooms.length" class="empty-actions">
-                <ElButton type="primary" size="large" :loading="busy" @click="generate(false)">一键智能排座</ElButton>
-                <ElButton size="large" :disabled="busy" @click="generate(true)">空白手动排座</ElButton>
-                <ElButton size="large" :disabled="busy" @click="generateDialog = true">更多排座选项</ElButton>
+                <ElButton type="primary" size="large" :loading="busy" @click="generate(false)">{{ t('一键智能排座') }}</ElButton>
+                <ElButton size="large" :disabled="busy" @click="generate(true)">{{ t('空白手动排座') }}</ElButton>
+                <ElButton size="large" :disabled="busy" @click="generateDialog = true">{{ t('更多排座选项') }}</ElButton>
               </div>
             </ElEmpty>
             <ElAlert
@@ -848,11 +851,11 @@ onMounted(() =>
               type="warning"
               show-icon
               :closable="false"
-              title="生成前数据检查提醒"
+              :title="t('生成前数据检查提醒')"
               style="margin-top: 16px; max-width: 560px"
             >
               <ul class="warn-list">
-                <li v-for="warning in inputWarnings" :key="warning">{{ warning }}</li>
+                <li v-for="warning in inputWarnings" :key="warning">{{ localizeMessage(warning) }}</li>
               </ul>
             </ElAlert>
           </div>
@@ -861,14 +864,14 @@ onMounted(() =>
             <div class="canvas-subbar">
               <div class="subbar-left">
                 <template v-if="editable">
-                  <ElTooltip content="撤销上一步调座" placement="top">
+                  <ElTooltip :content="t('撤销上一步调座')" placement="top">
                     <ElButton size="small" :icon="Back" :disabled="busy || !undoStack.length" @click="restoreAdjustment(undoStack, redoStack)">
-                      撤销
+                      {{ t('撤销') }}
                     </ElButton>
                   </ElTooltip>
-                  <ElTooltip content="重做" placement="top">
+                  <ElTooltip :content="t('重做')" placement="top">
                     <ElButton size="small" :icon="Right" :disabled="busy || !redoStack.length" @click="restoreAdjustment(redoStack, undoStack)">
-                      重做
+                      {{ t('重做') }}
                     </ElButton>
                   </ElTooltip>
                   <ElButton
@@ -878,14 +881,14 @@ onMounted(() =>
                     :disabled="busy"
                     @click="batchMode = !batchMode; batchSelection = []; selected = null"
                   >
-                    {{ batchMode ? `退出多选 (${batchSelection.length})` : '多选锁座' }}
+                    {{ batchMode ? t('退出多选 ({0})', batchSelection.length) : t('多选锁座') }}
                   </ElButton>
                   <template v-if="batchMode">
                     <ElButton size="small" :icon="Lock" :disabled="busy || !batchSelection.length" @click="adjust({ kind: 'batch_lock', positions: batchSelection, locked: true })">
-                      批量锁定
+                      {{ t('批量锁定') }}
                     </ElButton>
                     <ElButton size="small" :icon="Unlock" :disabled="busy || !batchSelection.length" @click="adjust({ kind: 'batch_lock', positions: batchSelection, locked: false })">
-                      批量解锁
+                      {{ t('批量解锁') }}
                     </ElButton>
                   </template>
                 </template>
@@ -893,34 +896,34 @@ onMounted(() =>
                   v-model="findQuery"
                   size="small"
                   clearable
-                  placeholder="快速找人（姓名／学号）"
+                  :placeholder="t('快速找人（姓名／学号）')"
                   :prefix-icon="Search"
                   style="width: 185px"
                 />
                 <ElTag v-if="findQuery.trim()" size="small" :type="matchedStudentIds.size ? 'success' : 'info'">
-                  命中 {{ matchedStudentIds.size }} 人
+                  {{ t('命中') }} {{ matchedStudentIds.size }} {{ t('人') }}
                 </ElTag>
               </div>
 
               <div class="subbar-right">
                 <ElPopover placement="bottom-end" :width="210" trigger="click">
                   <template #reference>
-                    <ElButton size="small" :icon="Setting">座位标签</ElButton>
+                    <ElButton size="small" :icon="Setting">{{ t('座位标签') }}</ElButton>
                   </template>
                   <div class="badge-popover">
-                    <p class="form-hint" style="margin-bottom: 8px">在座位卡上显示调座参考特征：</p>
+                    <p class="form-hint" style="margin-bottom: 8px">{{ t('在座位卡上显示调座参考特征：') }}</p>
                     <ElCheckboxGroup v-model="showBadges" class="badge-checks">
-                      <ElCheckbox value="gender">性别（男／女）</ElCheckbox>
-                      <ElCheckbox value="vision">视力关注（近视）</ElCheckbox>
-                      <ElCheckbox value="score">成绩等级／排名</ElCheckbox>
-                      <ElCheckbox value="discipline">纪律关注</ElCheckbox>
+                      <ElCheckbox value="gender">{{ t('性别（男／女）') }}</ElCheckbox>
+                      <ElCheckbox value="vision">{{ t('视力关注（近视）') }}</ElCheckbox>
+                      <ElCheckbox value="score">{{ t('成绩等级／排名') }}</ElCheckbox>
+                      <ElCheckbox value="discipline">{{ t('纪律关注') }}</ElCheckbox>
                     </ElCheckboxGroup>
                   </div>
                 </ElPopover>
-                <ElTooltip content="导出座位表时同步采用当前选择的视角" placement="top">
+                <ElTooltip :content="t('导出座位表时同步采用当前选择的视角')" placement="top">
                   <ElRadioGroup v-model="teacher" size="small">
-                    <ElRadioButton :value="false">学生视角</ElRadioButton>
-                    <ElRadioButton :value="true">教师视角</ElRadioButton>
+                    <ElRadioButton :value="false">{{ t('学生视角') }}</ElRadioButton>
+                    <ElRadioButton :value="true">{{ t('教师视角') }}</ElRadioButton>
                   </ElRadioGroup>
                 </ElTooltip>
               </div>
@@ -928,8 +931,8 @@ onMounted(() =>
 
             <div v-if="editable && chosen?.assignment" class="seat-context-bar">
               <span>
-                已选中：<strong>{{ chosen.student?.name }}</strong>（第 {{ chosen.row }} 排第 {{ chosen.column }} 座）
-                <span class="form-hint">· 点击另一座位可移座或互换</span>
+                {{ t('已选中：') }}<strong>{{ chosen.student?.name }}</strong>{{ t('（第') }} {{ chosen.row }} {{ t('排第') }} {{ chosen.column }} {{ t('座）') }}
+                <span class="form-hint">{{ t('· 点击另一座位可移座或互换') }}</span>
               </span>
               <div class="action-group">
                 <ElButton
@@ -938,7 +941,7 @@ onMounted(() =>
                   :disabled="busy"
                   @click="adjust({ kind: 'lock', position: selected })"
                 >
-                  {{ chosen.assignment.locked ? '解除锁定' : '锁定座位' }}
+                  {{ chosen.assignment.locked ? t('解除锁定') : t('锁定座位') }}
                 </ElButton>
                 <ElButton
                   size="small"
@@ -947,9 +950,9 @@ onMounted(() =>
                   :disabled="busy || chosen.assignment.locked"
                   @click="adjust({ kind: 'clear', position: selected })"
                 >
-                  移回待入座
+                  {{ t('移回待入座') }}
                 </ElButton>
-                <ElButton size="small" text @click="selected = null">取消选中</ElButton>
+                <ElButton size="small" text @click="selected = null">{{ t('取消选中') }}</ElButton>
               </div>
             </div>
 
@@ -961,20 +964,20 @@ onMounted(() =>
               style="margin-bottom: 10px"
             >
               <template #title>
-                快照规则提示（{{ plan.snapshot.warnings.length }} 条）：{{ plan.snapshot.warnings.join('；') }}
+                {{ t('快照规则提示（') }}{{ plan.snapshot.warnings.length }} {{ t('条）：') }}{{ plan.snapshot.warnings.map(localizeMessage).join(t('；')) }}
               </template>
             </ElAlert>
 
             <div class="canvas-board page-card">
-              <div v-if="podium === 'front'" class="podium">讲台</div>
-              <div class="layout-scroll seating-scroll" aria-label="排座网格">
+              <div v-if="podium === 'front'" class="podium">{{ t('讲台') }}</div>
+              <div class="layout-scroll seating-scroll" :aria-label="t('排座网格')">
                 <div class="layout-body">
-                  <div v-if="podium === 'left'" class="podium podium-side">讲台</div>
+                  <div v-if="podium === 'left'" class="podium podium-side">{{ t('讲台') }}</div>
                   <div
                     class="seat-grid"
                     :style="{ gridTemplateColumns: `52px repeat(${plan.snapshot.columns}, minmax(104px, 1fr))` }"
                   >
-                    <div class="seat-axis-corner">排 \ 列</div>
+                    <div class="seat-axis-corner">{{ t('排 \\ 列') }}</div>
                     <div v-for="col in displayColumns" :key="`col-${col}`" class="seat-axis-header">{{ col }}</div>
 
                     <template v-for="entry in gridRows" :key="`row-${entry.row}`">
@@ -1004,9 +1007,9 @@ onMounted(() =>
                           @drop="drop($event, cell)"
                           @dragend="clearDragState"
                         >
-                          <span v-if="cell.assignment?.locked" class="lock-pill" title="已锁定">🔒</span>
+                          <span v-if="cell.assignment?.locked" class="lock-pill" :title="t('已锁定')">🔒</span>
                           <div class="seat-student-name">
-                            {{ cell.student?.name ?? '空座' }}
+                            {{ cell.student?.name ?? t('空座') }}
                           </div>
                           <div v-if="teacher && cell.student" class="seat-student-no">{{ cell.student.number }}</div>
                           <div v-if="cell.student && showBadges.length" class="seat-badges">
@@ -1015,10 +1018,10 @@ onMounted(() =>
                               class="micro-badge"
                               :class="cell.student.gender ? 'badge-boy' : 'badge-girl'"
                             >
-                              {{ cell.student.gender ? '男' : '女' }}
+                              {{ cell.student.gender ? t('男') : t('女') }}
                             </span>
                             <span v-if="showBadges.includes('vision') && cell.student.poor_vision" class="micro-badge badge-vision">
-                              近视
+                              {{ t('近视') }}
                             </span>
                             <span
                               v-if="showBadges.includes('score') && studentScoreBadge(cell.student)"
@@ -1030,34 +1033,34 @@ onMounted(() =>
                               v-if="showBadges.includes('discipline') && cell.student.discipline_attention"
                               class="micro-badge badge-discipline"
                             >
-                              关注
+                              {{ t('关注') }}
                             </span>
                           </div>
                         </button>
                         <div v-else-if="cell.position" class="seat-nonseat" :class="cell.position.kind">
-                          {{ cell.position.kind === 'aisle' ? '过道' : '不可用' }}
+                          {{ cell.position.kind === 'aisle' ? t('过道') : t('不可用') }}
                         </div>
                         <div v-else class="seat-nonseat empty-slot" aria-hidden="true"></div>
                       </template>
                     </template>
                   </div>
-                  <div v-if="podium === 'right'" class="podium podium-side">讲台</div>
+                  <div v-if="podium === 'right'" class="podium podium-side">{{ t('讲台') }}</div>
                 </div>
               </div>
-              <div v-if="podium === 'back'" class="podium">讲台</div>
+              <div v-if="podium === 'back'" class="podium">{{ t('讲台') }}</div>
             </div>
           </template>
         </div>
 
         <aside v-if="plan && inspectorOpen" class="inspector-pane page-card">
           <ElTabs v-model="inspectorTab" class="inspector-tabs">
-            <ElTabPane label="评分与待入座" name="score">
+            <ElTabPane :label="t('评分与待入座')" name="score">
               <div v-if="plan && editable && unseated.length" class="unseated-box">
                 <div class="box-title">
-                  <strong>待入座学生</strong>
-                  <ElTag type="warning" size="small" round>{{ unseated.length }} 人</ElTag>
+                  <strong>{{ t('待入座学生') }}</strong>
+                  <ElTag type="warning" size="small" round>{{ unseated.length }} {{ t('人') }}</ElTag>
                 </div>
-                <p class="form-hint">拖动或先点击学生再点击空座即可入座。</p>
+                <p class="form-hint">{{ t('拖动或先点击学生再点击空座即可入座。') }}</p>
                 <div class="unseated-chips">
                   <button
                     v-for="student in unseated"
@@ -1079,9 +1082,9 @@ onMounted(() =>
               <template v-if="plan">
                 <div class="score-summary">
                   <div class="score-head">
-                    <span>综合规则得分</span>
+                    <span>{{ t('综合规则得分') }}</span>
                     <strong v-if="maximum">{{ total }} / {{ maximum }}</strong>
-                    <span v-else class="form-hint">暂无软规则评分</span>
+                    <span v-else class="form-hint">{{ t('暂无软规则评分') }}</span>
                   </div>
                   <ElProgress v-if="maximum" :percentage="scorePercent" :stroke-width="8" />
                 </div>
@@ -1090,7 +1093,7 @@ onMounted(() =>
                   <div v-for="(rating, index) in plan.ratings" :key="index" class="rating-row">
                     <div class="rating-label">
                       <span>{{ rating.label }}</span>
-                      <strong>{{ rating.maximum ? `${rating.score}/${rating.maximum}` : '无数据' }}</strong>
+                      <strong>{{ rating.maximum ? `${rating.score}/${rating.maximum}` : t('无数据') }}</strong>
                     </div>
                     <ElProgress
                       v-if="rating.maximum"
@@ -1100,19 +1103,19 @@ onMounted(() =>
                     />
                   </div>
                 </div>
-                <ElEmpty v-else :image-size="56" description="当前方案无软规则评分项" />
+                <ElEmpty v-else :image-size="56" :description="t('当前方案无软规则评分项')" />
               </template>
-              <ElEmpty v-else :image-size="60" description="打开或生成方案后查看实时评分" />
+              <ElEmpty v-else :image-size="60" :description="t('打开或生成方案后查看实时评分')" />
             </ElTabPane>
 
-            <ElTabPane :label="`方案历史 (${history.length})`" name="history">
+            <ElTabPane :label="t('方案历史 ({0})', history.length)" name="history">
               <div class="history-filters">
-                <ElInput v-model="historySearch" size="small" clearable placeholder="搜索方案名称" :prefix-icon="Search" />
+                <ElInput v-model="historySearch" size="small" clearable :placeholder="t('搜索方案名称')" :prefix-icon="Search" />
                 <ElRadioGroup v-model="historyStatus" size="small">
-                  <ElRadioButton value="">全部</ElRadioButton>
-                  <ElRadioButton value="已启用">已启用</ElRadioButton>
-                  <ElRadioButton value="草稿">草稿</ElRadioButton>
-                  <ElRadioButton value="已归档">归档</ElRadioButton>
+                  <ElRadioButton value="">{{ t('全部') }}</ElRadioButton>
+                  <ElRadioButton value="已启用">{{ t('已启用') }}</ElRadioButton>
+                  <ElRadioButton value="草稿">{{ t('草稿') }}</ElRadioButton>
+                  <ElRadioButton value="已归档">{{ t('归档') }}</ElRadioButton>
                 </ElRadioGroup>
               </div>
               <div v-if="filteredHistory.length" class="history-list">
@@ -1127,25 +1130,25 @@ onMounted(() =>
                 >
                   <div class="history-card-top">
                     <strong class="history-name">{{ item.name }}</strong>
-                    <ElTag :type="planStatusTagType(item)" size="small" effect="light">{{ planStatus(item) }}</ElTag>
+                    <ElTag :type="planStatusTagType(item)" size="small" effect="light">{{ t(planStatus(item)) }}</ElTag>
                   </div>
                   <div class="history-card-meta">
                     <ElTag size="small" effect="plain" :type="item.source === 'ai' ? 'primary' : 'info'">
-                      {{ item.source === 'ai' ? 'AI' : '智能' }}
+                      {{ item.source === 'ai' ? 'AI' : t('智能') }}
                     </ElTag>
                     <span>{{ formatTime(item.updated_at) }}</span>
                   </div>
                 </button>
               </div>
-              <ElEmpty v-else :image-size="56" description="暂无符合条件的历史方案" />
+              <ElEmpty v-else :image-size="56" :description="t('暂无符合条件的历史方案')" />
             </ElTabPane>
 
-            <ElTabPane label="历史对比" name="compare">
+            <ElTabPane :label="t('历史对比')" name="compare">
               <template v-if="plan && history.some(item => item.id !== plan.id)">
                 <ElSelect
                   :model-value="comparison?.id ?? null"
                   clearable
-                  placeholder="选择要对比的历史方案"
+                  :placeholder="t('选择要对比的历史方案')"
                   style="width: 100%; margin-bottom: 12px"
                   :disabled="busy"
                   @change="loadComparison"
@@ -1153,23 +1156,23 @@ onMounted(() =>
                   <ElOption
                     v-for="item in history.filter(entry => entry.id !== plan.id)"
                     :key="item.id"
-                    :label="`${item.name}（${planStatus(item)}）`"
+                    :label="t('{0}（{1}）', item.name, t(planStatus(item)))"
                     :value="item.id"
                   />
                 </ElSelect>
                 <template v-if="comparison">
                   <p class="form-hint" style="margin-bottom: 10px">
-                    与「{{ comparison.name }}」相比，共 <strong>{{ comparisonChanges.length }}</strong> 名学生座位变动（左侧已用蓝边标出）。
+                    {{ t('与「') }}{{ comparison.name }}{{ t('」相比，共') }} <strong>{{ comparisonChanges.length }}</strong> {{ t('名学生座位变动（左侧已用蓝边标出）。') }}
                   </p>
                   <ElTable v-if="comparisonChanges.length" :data="comparisonChanges" size="small" max-height="420">
-                    <ElTableColumn prop="name" label="学生" width="76" />
-                    <ElTableColumn prop="before" label="原座位" />
-                    <ElTableColumn prop="after" label="当前座位" />
+                    <ElTableColumn prop="name" :label="t('学生')" width="76" />
+                    <ElTableColumn prop="before" :label="t('原座位')" />
+                    <ElTableColumn prop="after" :label="t('当前座位')" />
                   </ElTable>
-                  <ElEmpty v-else :image-size="48" description="两份方案座位完全一致" />
+                  <ElEmpty v-else :image-size="48" :description="t('两份方案座位完全一致')" />
                 </template>
               </template>
-              <ElEmpty v-else :image-size="56" description="需要至少两份已保存方案才能对比" />
+              <ElEmpty v-else :image-size="56" :description="t('需要至少两份已保存方案才能对比')" />
             </ElTabPane>
           </ElTabs>
         </aside>
@@ -1177,30 +1180,30 @@ onMounted(() =>
     </template>
 
     <!-- 新建／生成方案弹窗 -->
-    <ElDialog v-model="generateDialog" title="生成或创建排座方案" width="min(92vw, 560px)" destroy-on-close>
+    <ElDialog v-model="generateDialog" :title="t('生成或创建排座方案')" width="min(92vw, 560px)" destroy-on-close>
       <div class="drawer-form">
-        <p class="required-legend"><span>*</span> 为必填项</p>
+        <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
         <div class="form-field" :class="{ 'is-error': !roomId }">
-          <span class="form-label is-required">目标教室</span>
-          <ElSelect v-model="roomId" placeholder="请选择目标教室" :disabled="busy" @change="run(inspectInputs)">
-            <ElOption v-for="room in rooms" :key="room.id" :label="`${room.name}${room.is_default ? '（默认）' : ''}`" :value="room.id" />
+          <span class="form-label is-required">{{ t('目标教室') }}</span>
+          <ElSelect v-model="roomId" :placeholder="t('请选择目标教室')" :disabled="busy" @change="run(inspectInputs)">
+            <ElOption v-for="room in rooms" :key="room.id" :label="`${room.name}${room.is_default ? t('（默认）') : ''}`" :value="room.id" />
           </ElSelect>
-          <p v-if="!roomId" class="form-error">请选择目标教室</p>
+          <p v-if="!roomId" class="form-error">{{ t('请选择目标教室') }}</p>
         </div>
         <div class="form-field">
-          <span class="form-label">成绩来源</span>
-          <ElSelect v-model="examId" clearable placeholder="学生档案中的成绩等级（默认）" :disabled="busy" @change="run(inspectInputs)">
-            <ElOption label="学生档案中的成绩等级（默认）" :value="null" />
+          <span class="form-label">{{ t('成绩来源') }}</span>
+          <ElSelect v-model="examId" clearable :placeholder="t('学生档案中的成绩等级（默认）')" :disabled="busy" @change="run(inspectInputs)">
+            <ElOption :label="t('学生档案中的成绩等级（默认）')" :value="null" />
             <ElOption
               v-for="exam in exams"
               :key="exam.id"
-              :label="`${exam.name}${exam.rank_grading ? '（使用档案等级）' : '（沿用旧版总排名）'}${exam.is_current ? '（当前）' : ''}`"
+              :label="`${exam.name}${exam.rank_grading ? t('（使用档案等级）') : t('（沿用旧版总排名）')}${exam.is_current ? t('（当前）') : ''}`"
               :value="exam.id"
             />
           </ElSelect>
         </div>
         <div v-if="aiProfiles.length" class="form-field">
-          <span class="form-label">AI 模型（使用 AI 排座时）</span>
+          <span class="form-label">{{ t('AI 模型（使用 AI 排座时）') }}</span>
           <ElSelect v-model="aiProfileId" :disabled="busy">
             <ElOption
               v-for="item in aiProfiles"
@@ -1212,27 +1215,27 @@ onMounted(() =>
         </div>
 
         <ElCollapse v-model="advancedSeedOpen">
-          <ElCollapseItem title="高级选项：排座随机种子" name="seed">
+          <ElCollapseItem :title="t('高级选项：排座随机种子')" name="seed">
             <div class="seed-row">
               <ElInputNumber v-model="seed" :min="0" :max="4294967295" :disabled="busy" controls-position="right" style="flex: 1" />
-              <ElButton :disabled="busy" @click="nextRandomSeed">随机种子</ElButton>
+              <ElButton :disabled="busy" @click="nextRandomSeed">{{ t('随机种子') }}</ElButton>
             </div>
-            <p class="form-hint" style="margin-top: 6px">相同资料和种子下，本地规则引擎会复现完全一致的座位表。</p>
+            <p class="form-hint" style="margin-top: 6px">{{ t('相同资料和种子下，本地规则引擎会复现完全一致的座位表。') }}</p>
           </ElCollapseItem>
         </ElCollapse>
 
-        <ElAlert v-if="inputWarnings.length" type="warning" show-icon :closable="false" title="生成前数据提示">
+        <ElAlert v-if="inputWarnings.length" type="warning" show-icon :closable="false" :title="t('生成前数据提示')">
           <ul class="warn-list">
-            <li v-for="warning in inputWarnings" :key="warning">{{ warning }}</li>
+            <li v-for="warning in inputWarnings" :key="warning">{{ localizeMessage(warning) }}</li>
           </ul>
         </ElAlert>
       </div>
       <template #footer>
         <div class="generate-footer">
-          <ElButton :disabled="busy || !roomId" @click="generate(true)">空白手动创建</ElButton>
-          <ElButton :icon="MagicStick" :disabled="busy || !roomId" @click="prepareAi(false)">AI 排座</ElButton>
-          <ElButton v-if="plan && editable && !editingActive" :disabled="busy" @click="regenerate">保留锁座重排</ElButton>
-          <ElButton type="primary" :loading="busy" :disabled="!roomId" @click="generate(false)">智能生成新方案</ElButton>
+          <ElButton :disabled="busy || !roomId" @click="generate(true)">{{ t('空白手动创建') }}</ElButton>
+          <ElButton :icon="MagicStick" :disabled="busy || !roomId" @click="prepareAi(false)">{{ t('AI 排座') }}</ElButton>
+          <ElButton v-if="plan && editable && !editingActive" :disabled="busy" @click="regenerate">{{ t('保留锁座重排') }}</ElButton>
+          <ElButton type="primary" :loading="busy" :disabled="!roomId" @click="generate(false)">{{ t('智能生成新方案') }}</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -1240,32 +1243,32 @@ onMounted(() =>
     <!-- AI 脱敏发送范围确认弹窗 -->
     <ElDialog
       :model-value="!!aiPreview"
-      title="确认 AI 发送范围"
+      :title="t('确认 AI 发送范围')"
       width="min(92vw, 620px)"
       :close-on-click-modal="false"
       :before-close="() => cancelAi()"
     >
       <div v-if="aiPreview" class="drawer-form">
         <div class="ai-meta-box">
-          <div><strong>服务地址：</strong><code>{{ aiPreview.endpoint }}</code></div>
-          <div><strong>模型名称：</strong><code>{{ aiPreview.model }}</code></div>
+          <div><strong>{{ t('服务地址：') }}</strong><code>{{ aiPreview.endpoint }}</code></div>
+          <div><strong>{{ t('模型名称：') }}</strong><code>{{ aiPreview.model }}</code></div>
         </div>
         <p class="form-hint" style="font-size: 13px; color: #314b43">
-          本次仅发送 <strong>{{ aiPreview.payload.students.length }}</strong> 个一次性学生编号、<strong>{{ aiPreview.payload.seats.length }}</strong> 个座位，以及讲台方向、相邻、同桌、锁座和前排等必要硬约束。姓名、学号与成绩均保留在本机。
+          {{ t('本次仅发送') }} <strong>{{ aiPreview.payload.students.length }}</strong> {{ t('个一次性学生编号、') }}<strong>{{ aiPreview.payload.seats.length }}</strong> {{ t('个座位，以及讲台方向、相邻、同桌、锁座和前排等必要硬约束。姓名、学号与成绩均保留在本机。') }}
         </p>
         <details class="payload-details">
-          <summary>查看实际发送 JSON 字段</summary>
+          <summary>{{ t('查看实际发送 JSON 字段') }}</summary>
           <pre>{{ JSON.stringify(aiPreview.payload, null, 2) }}</pre>
         </details>
-        <ElAlert v-if="aiRunning" type="info" show-icon :closable="false" title="正在等待 AI 返回排座建议，当前本地方案仍完整保留…" />
-        <ElAlert v-else-if="aiFailure" type="error" show-icon :closable="false" :title="`${aiFailure}。可点击下方改用本地智能排座。`" />
-        <ElCheckbox v-else v-model="autoFallback">AI 失败或校验未通过时自动改用本地智能排座</ElCheckbox>
+        <ElAlert v-if="aiRunning" type="info" show-icon :closable="false" :title="t('正在等待 AI 返回排座建议，当前本地方案仍完整保留…')" />
+        <ElAlert v-else-if="aiFailure" type="error" show-icon :closable="false" :title="t('{0}。可点击下方改用本地智能排座。', localizeMessage(aiFailure))" />
+        <ElCheckbox v-else v-model="autoFallback">{{ t('AI 失败或校验未通过时自动改用本地智能排座') }}</ElCheckbox>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton @click="cancelAi">{{ aiRunning ? '取消 AI 调用' : '取消' }}</ElButton>
-          <ElButton v-if="aiFailure" type="primary" :loading="busy" @click="manualFallback">改用本地智能排座</ElButton>
-          <ElButton v-if="!aiRunning && !aiFailure" type="primary" :loading="busy" @click="confirmAi">确认发送</ElButton>
+          <ElButton @click="cancelAi">{{ aiRunning ? t('取消 AI 调用') : t('取消') }}</ElButton>
+          <ElButton v-if="aiFailure" type="primary" :loading="busy" @click="manualFallback">{{ t('改用本地智能排座') }}</ElButton>
+          <ElButton v-if="!aiRunning && !aiFailure" type="primary" :loading="busy" @click="confirmAi">{{ t('确认发送') }}</ElButton>
         </div>
       </template>
     </ElDialog>

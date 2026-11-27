@@ -4,8 +4,8 @@ use crate::{
 };
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook};
 use serde::Serialize;
-use std::{collections::HashMap, io::Write};
-use tauri::WebviewWindow;
+use std::{collections::HashMap, io::Write, path::Path};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 
 #[derive(Serialize)]
 pub struct Sheet {
@@ -178,20 +178,36 @@ pub fn workbook(data: &Sheet) -> Result<Vec<u8>, String> {
     workbook.save_to_buffer().map_err(|e| e.to_string())
 }
 
-pub fn save_file<R: tauri::Runtime>(
+pub fn save_file<R: Runtime>(
     window: WebviewWindow<R>,
     bytes: Vec<u8>,
     extension: &'static str,
+    locale: Option<&str>,
 ) -> Result<bool, String> {
+    let filename = crate::localization::dialog_text(locale, "座位表");
+    let title = crate::localization::dialog_text(locale, "另存为座位表");
+    save_export(&window, &bytes, extension, title, &format!("{filename}.{extension}"))
+}
+
+pub fn save_export<R: Runtime>(
+    window: &WebviewWindow<R>,
+    bytes: &[u8],
+    extension: &'static str,
+    title: &str,
+    filename: &str,
+) -> Result<bool, String> {
+    let app = window.app_handle();
+    crate::app_lock::ensure_unlocked(app)?;
     let chosen = rfd::FileDialog::new()
-        .set_parent(&window)
-        .set_title("另存为座位表")
-        .set_file_name(format!("座位表.{extension}"))
+        .set_parent(window)
+        .set_title(title)
+        .set_file_name(filename)
         .add_filter(extension.to_uppercase(), &[extension])
         .save_file();
     let Some(path) = chosen else {
         return Ok(false);
     };
+    crate::app_lock::ensure_unlocked(app)?;
     if !path
         .extension()
         .and_then(|s| s.to_str())
@@ -199,11 +215,21 @@ pub fn save_file<R: tauri::Runtime>(
     {
         return Err(format!("请选择 .{extension} 文件名"));
     }
-    let parent = path.parent().ok_or("保存路径无效")?;
-    let write_error = |e: std::io::Error| format!("保存座位表失败：{e}");
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(write_error)?;
-    temporary.write_all(&bytes).map_err(write_error)?;
-    temporary.as_file().sync_all().map_err(write_error)?;
-    temporary.persist(&path).map_err(|e| write_error(e.error))?;
+    persist_locked_bytes(app, &path, bytes)?;
     Ok(true)
+}
+
+pub(crate) fn persist_locked_bytes<R: Runtime>(
+    app: &AppHandle<R>,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let parent = path.parent().ok_or("保存路径无效")?;
+    let write_error = |e: std::io::Error| format!("保存导出文件失败：{e}");
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(write_error)?;
+    temporary.write_all(bytes).map_err(write_error)?;
+    temporary.as_file().sync_all().map_err(write_error)?;
+    crate::app_lock::with_unlocked(app, || {
+        temporary.persist(path).map(|_| ()).map_err(|e| write_error(e.error))
+    })
 }

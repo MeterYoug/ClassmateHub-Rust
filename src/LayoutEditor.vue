@@ -1,4 +1,5 @@
 <script setup>
+import { t } from './i18n.js'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { ElButton, ElInput, ElRadioButton, ElRadioGroup, ElTag, ElTooltip } from 'element-plus'
@@ -197,9 +198,9 @@ function cellClass(row, column) {
 
 function cellText(row, column) {
   const value = current(row, column)
-  if (!value) return '未设置'
-  if (!value.active) return '已停用'
-  return value.desk_group && value.kind === 'seat' ? `座位 · ${value.desk_group}` : labels[value.kind]
+  if (!value) return t('未设置')
+  if (!value.active) return t('已停用')
+  return value.desk_group && value.kind === 'seat' ? t('座位 · {0}', value.desk_group) : t(labels[value.kind])
 }
 
 async function close() {
@@ -249,63 +250,63 @@ async function save() {
   <section class="layout-editor-panel" :class="{ 'inline-mode': inline }">
     <div class="layout-top">
       <div>
-        <h3>{{ inline ? '可视化教室布局' : `${classroom.name} · 教室布局` }}</h3>
+        <h3>{{ inline ? t('可视化教室布局') : t('{0} · 教室布局', classroom.name) }}</h3>
         <p class="form-hint">
-          {{ classroom.rows }} 行 × {{ classroom.columns }} 列 · 讲台在{{ podiumLabels[classroom.podium] ?? classroom.podium }}。点击格子绘制，点击行号／列号可整排／整列批量设置。
+          {{ classroom.rows }} {{ t('行 ×') }} {{ classroom.columns }} {{ t('列 · 讲台在') }}{{ t(podiumLabels[classroom.podium] ?? classroom.podium) }}{{ t('。点击格子绘制，点击行号／列号可整排／整列批量设置。') }}
         </p>
       </div>
       <div class="layout-stats">
-        <ElTag type="success" effect="light">有效座位 {{ stats.seat }}</ElTag>
-        <ElTag type="info" effect="light">过道 {{ stats.aisle }}</ElTag>
-        <ElTag v-if="stats.unavailable" type="danger" effect="light">不可用 {{ stats.unavailable }}</ElTag>
-        <ElTag v-if="stats.disabledCount" type="warning" effect="light">已停用 {{ stats.disabledCount }}</ElTag>
-        <ElTag v-if="changes.size" type="warning" effect="dark">待保存 {{ changes.size }} 处</ElTag>
+        <ElTag type="success" effect="light">{{ t('有效座位') }} {{ stats.seat }}</ElTag>
+        <ElTag type="info" effect="light">{{ t('过道') }} {{ stats.aisle }}</ElTag>
+        <ElTag v-if="stats.unavailable" type="danger" effect="light">{{ t('不可用') }} {{ stats.unavailable }}</ElTag>
+        <ElTag v-if="stats.disabledCount" type="warning" effect="light">{{ t('已停用') }} {{ stats.disabledCount }}</ElTag>
+        <ElTag v-if="changes.size" type="warning" effect="dark">{{ t('待保存') }} {{ changes.size }} {{ t('处') }}</ElTag>
       </div>
     </div>
 
-    <p v-if="loading" class="form-hint">正在读取布局…</p>
+    <p v-if="loading" class="form-hint">{{ t('正在读取布局…') }}</p>
     <template v-else-if="ready">
       <div class="brush-bar">
         <ElRadioGroup v-model="tool" size="small" :disabled="saving || disabled">
-          <ElRadioButton value="cycle">点击切换</ElRadioButton>
-          <ElRadioButton value="seat">设座位</ElRadioButton>
-          <ElRadioButton value="aisle">设过道</ElRadioButton>
-          <ElRadioButton value="unavailable">不可用</ElRadioButton>
-          <ElRadioButton value="group">同桌分组</ElRadioButton>
-          <ElRadioButton value="disable">停用位置</ElRadioButton>
+          <ElRadioButton value="cycle">{{ t('点击切换') }}</ElRadioButton>
+          <ElRadioButton value="seat">{{ t('设座位') }}</ElRadioButton>
+          <ElRadioButton value="aisle">{{ t('设过道') }}</ElRadioButton>
+          <ElRadioButton value="unavailable">{{ t('不可用') }}</ElRadioButton>
+          <ElRadioButton value="group">{{ t('同桌分组') }}</ElRadioButton>
+          <ElRadioButton value="disable">{{ t('停用位置') }}</ElRadioButton>
         </ElRadioGroup>
         <ElInput
           v-if="tool === 'group'"
           v-model="group"
           size="small"
           maxlength="32"
-          placeholder="分组名（留空可清除）"
+          :placeholder="t('分组名（留空可清除）')"
           style="width: 180px"
           :disabled="saving || disabled"
         />
         <div class="brush-actions">
           <ElButton v-if="!emptyLayout && stats.unset > 0" size="small" :disabled="saving || disabled" @click="fillEmpty">
-            填充未设为座位 ({{ stats.unset }})
+            {{ t('填充未设为座位 (') }}{{ stats.unset }})
           </ElButton>
           <ElButton v-if="changes.size" size="small" plain :disabled="saving || disabled" @click="resetChanges">
-            撤销本次改动
+            {{ t('撤销本次改动') }}
           </ElButton>
         </div>
       </div>
 
-      <div v-if="classroom.podium === 'front'" class="podium">讲 台</div>
+      <div v-if="classroom.podium === 'front'" class="podium">{{ t('讲 台') }}</div>
       <div class="layout-scroll">
         <div class="layout-body">
-          <div v-if="classroom.podium === 'left'" class="podium podium-side">讲台</div>
+          <div v-if="classroom.podium === 'left'" class="podium podium-side">{{ t('讲台') }}</div>
           <div
             class="editor-grid"
             :style="{ gridTemplateColumns: `58px repeat(${columns.length}, minmax(82px, 1fr))` }"
           >
-            <div class="grid-corner">排＼列</div>
+            <div class="grid-corner">{{ t('排＼列') }}</div>
             <ElTooltip
               v-for="column in columns"
               :key="'col-' + column"
-              :content="tool === 'cycle' ? `整列切换座位／过道（第 ${column} 列）` : `用当前画笔整列设置第 ${column} 列`"
+              :content="tool === 'cycle' ? t('整列切换座位／过道（第 {0} 列）', column) : t('用当前画笔整列设置第 {0} 列', column)"
               placement="top"
               :show-after="350"
             >
@@ -315,13 +316,13 @@ async function save() {
                 :disabled="saving || disabled"
                 @click="paintColumn(column)"
               >
-                第 {{ column }} 列
+                {{ t('第') }} {{ column }} {{ t('列') }}
               </button>
             </ElTooltip>
 
             <template v-for="row in rows" :key="'row-' + row">
               <ElTooltip
-                :content="tool === 'cycle' ? `整排切换座位／过道（第 ${row} 排）` : `用当前画笔整排设置第 ${row} 排`"
+                :content="tool === 'cycle' ? t('整排切换座位／过道（第 {0} 排）', row) : t('用当前画笔整排设置第 {0} 排', row)"
                 placement="left"
                 :show-after="350"
               >
@@ -331,7 +332,7 @@ async function save() {
                   :disabled="saving || disabled"
                   @click="paintRow(row)"
                 >
-                  第 {{ row }} 排
+                  {{ t('第') }} {{ row }} {{ t('排') }}
                 </button>
               </ElTooltip>
               <button
@@ -340,7 +341,7 @@ async function save() {
                 type="button"
                 class="layout-cell"
                 :class="[cellClass(row, column), { modified: changes.has(key(row, column)) }]"
-                :aria-label="`第 ${row} 行第 ${column} 列：${cellText(row, column)}`"
+                :aria-label="t('第 {0} 行第 {1} 列：{2}', row, column, cellText(row, column))"
                 :disabled="saving || disabled"
                 @click="paint(row, column)"
               >
@@ -349,15 +350,15 @@ async function save() {
               </button>
             </template>
           </div>
-          <div v-if="classroom.podium === 'right'" class="podium podium-side">讲台</div>
+          <div v-if="classroom.podium === 'right'" class="podium podium-side">{{ t('讲台') }}</div>
         </div>
       </div>
-      <div v-if="classroom.podium === 'back'" class="podium">讲 台</div>
+      <div v-if="classroom.podium === 'back'" class="podium">{{ t('讲 台') }}</div>
 
       <div v-if="!inline" class="layout-footer">
-        <ElButton :disabled="saving" @click="close">取消</ElButton>
+        <ElButton :disabled="saving" @click="close">{{ t('取消') }}</ElButton>
         <ElButton type="primary" :loading="saving" :disabled="!changes.size" @click="save">
-          保存布局（{{ changes.size }} 处修改）
+          {{ t('保存布局（') }}{{ changes.size }} {{ t('处修改）') }}
         </ElButton>
       </div>
     </template>

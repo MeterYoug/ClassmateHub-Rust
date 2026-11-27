@@ -454,12 +454,17 @@ fn sanitize_filename(raw: Option<&str>) -> String {
     }
 }
 
-pub async fn download_asset_to_path(url: &Url, target: &PathBuf) -> Result<(), String> {
+async fn download_asset_to_path<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    url: &Url,
+    target: &PathBuf,
+) -> Result<(), String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(300))
         .user_agent(format!("ClassmateHub/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|_| "无法初始化更新下载客户端".to_string())?;
+    crate::app_lock::ensure_unlocked(app)?;
     let mut response = client
         .get(url.clone())
         .send()
@@ -476,6 +481,7 @@ pub async fn download_asset_to_path(url: &Url, target: &PathBuf) -> Result<(), S
     }
     let parent = target.parent().ok_or("保存目录无效")?;
     let write_error = |e: std::io::Error| format!("写入安装包文件失败：{e}");
+    crate::app_lock::ensure_unlocked(app)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(write_error)?;
     let mut total = 0usize;
     while let Some(chunk) = response
@@ -487,28 +493,33 @@ pub async fn download_asset_to_path(url: &Url, target: &PathBuf) -> Result<(), S
         if total > MAX_ASSET_BYTES {
             return Err("安装包大小超出安全限制（600 MB）".into());
         }
+        crate::app_lock::ensure_unlocked(app)?;
         temporary.write_all(&chunk).map_err(write_error)?;
     }
     if total == 0 {
         return Err("下载的安装包内容为空".into());
     }
     temporary.as_file().sync_all().map_err(write_error)?;
-    temporary.persist(target).map_err(|e| write_error(e.error))?;
+    crate::app_lock::with_unlocked(app, || {
+        temporary.persist(target).map_err(|e| write_error(e.error))
+    })?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn download_update_asset<R: tauri::Runtime>(
+    app: AppHandle<R>,
     window: WebviewWindow<R>,
     url: String,
     suggested_name: Option<String>,
+    locale: Option<String>,
 ) -> Result<Option<String>, String> {
     let checked_url = validate_update_url(&url)?;
     let filename = sanitize_filename(suggested_name.as_deref());
     let chosen = tauri::async_runtime::spawn_blocking(move || {
         rfd::FileDialog::new()
             .set_parent(&window)
-            .set_title("保存新版班伴安装包")
+            .set_title(crate::localization::dialog_text(locale.as_deref(), "保存新版班伴安装包"))
             .set_file_name(&filename)
             .save_file()
     })
@@ -518,7 +529,8 @@ pub async fn download_update_asset<R: tauri::Runtime>(
     let Some(path) = chosen else {
         return Ok(None);
     };
-    download_asset_to_path(&checked_url, &path).await?;
+    crate::app_lock::ensure_unlocked(&app)?;
+    download_asset_to_path(&app, &checked_url, &path).await?;
     Ok(Some(path.display().to_string()))
 }
 
@@ -607,8 +619,13 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(crate::app_lock::AppLock::load(dir.path().into()));
+        crate::app_lock::setup_app_lock(app.state(), "fixture-password".into(), None).unwrap();
+        let handle = app.handle().clone();
         let server = std::thread::spawn(move || {
-            for _ in 0..2 {
+            for index in 0..3 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut buf = [0u8; 2048];
                 let n = stream.read(&mut buf).unwrap();
@@ -624,6 +641,9 @@ mod tests {
                     );
                     stream.write_all(resp.as_bytes()).unwrap();
                 } else {
+                    if index == 2 {
+                        crate::app_lock::lock_app(handle.state()).unwrap();
+                    }
                     let payload = b"FAKE_INSTALLER_BINARY";
                     let resp = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -641,10 +661,15 @@ mod tests {
         assert_eq!(check.latest_version.as_deref(), Some("0.2.0"));
         let dl_url = validate_update_url(check.download_url.as_deref().unwrap()).unwrap();
 
-        let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("班伴_0.2.0_x64-setup.exe");
-        download_asset_to_path(&dl_url, &dest).await.unwrap();
+        download_asset_to_path(app.handle(), &dl_url, &dest).await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"FAKE_INSTALLER_BINARY");
+        let locked_dest = dir.path().join("locked.exe");
+        assert_eq!(
+            download_asset_to_path(app.handle(), &dl_url, &locked_dest).await.unwrap_err(),
+            crate::app_lock::LOCKED,
+        );
+        assert!(!locked_dest.exists());
         server.join().unwrap();
     }
 }

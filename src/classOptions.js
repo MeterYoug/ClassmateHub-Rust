@@ -1,4 +1,7 @@
+import { t } from './i18n.js'
+
 export const classSubjects = ['语文', '数学', '英语', '科学', '道德与法治', '历史', '地理', '生物', '物理', '化学', '政治']
+export const subjectLabel = name => classSubjects.includes(name) ? t(name) : name
 const primarySubjects = ['语文', '数学', '英语', '科学']
 const juniorSubjects = ['语文', '数学', '英语', '道德与法治', '历史', '地理', '生物']
 const seniorSubjects = ['语文', '数学', '英语', '物理', '化学', '生物', '政治', '历史', '地理']

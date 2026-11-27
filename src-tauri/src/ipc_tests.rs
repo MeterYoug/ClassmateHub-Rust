@@ -20,6 +20,217 @@ fn call(window: &WebviewWindow<MockRuntime>, command: &str, body: Value) -> Resu
 }
 
 #[test]
+fn app_lock_credentials_and_settings_survive_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app-lock.json");
+    let builder = || with_commands(mock_builder().manage(app_lock::AppLock::load(directory.path().into())))
+        .build(mock_context(noop_assets())).unwrap();
+    let setup = {
+        let app = builder();
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        assert_eq!(call(&window, "app_lock_status", json!({})).unwrap()["enabled"], false);
+        assert!(!path.exists());
+        for password in ["短密码", "      ", "valid\tpassword"] {
+            assert!(call(&window, "setup_app_lock", json!({"password":password})).is_err());
+        }
+        assert!(call(&window, "setup_app_lock", json!({"password":"fixture","idleTimeoutMinutes":6})).is_err());
+        let response = call(&window, "setup_app_lock", json!({
+            "password":" 多语言密码 ", "idleTimeoutMinutes":5
+        })).unwrap();
+        let on_disk: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(on_disk["version"], 1);
+        assert_eq!(on_disk["idle_timeout_minutes"], 5);
+        for field in ["password_hash", "recovery_hash"] {
+            assert!(on_disk[field].as_str().unwrap().starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+        }
+        assert_ne!(on_disk["password_hash"], on_disk["recovery_hash"]);
+        response
+    };
+    let code = setup["recovery_code"].as_str().unwrap();
+    assert!(code.split('-').count() == 4 && code.split('-').all(|part| part.len() == 4));
+
+    let app = builder();
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    let status = call(&window, "app_lock_status", json!({})).unwrap();
+    assert_eq!(status["locked"], true);
+    assert_eq!(status["idle_timeout_minutes"], 5);
+    assert_eq!(status.as_object().unwrap().len(), 6);
+    assert!(call(&window, "unlock_app", json!({"password":"多语言密码"})).is_err());
+    assert_eq!(call(&window, "unlock_app", json!({"password":" 多语言密码 "})).unwrap()["locked"], false);
+
+    assert!(call(&window, "change_app_lock_password", json!({"currentPassword":"incorrect","newPassword":"fixture-B"})).is_err());
+    call(&window, "change_app_lock_password", json!({"currentPassword":" 多语言密码 ","newPassword":"fixture-B"})).unwrap();
+    let status = call(&window, "update_app_lock_settings", json!({"idleTimeoutMinutes":30})).unwrap();
+    assert_eq!(status["idle_timeout_minutes"], 30);
+    let regenerated = call(&window, "regenerate_recovery_code", json!({"currentPassword":"fixture-B"})).unwrap();
+    let replacement = regenerated["recovery_code"].as_str().unwrap();
+    assert_ne!(replacement, code);
+    call(&window, "lock_app", json!({})).unwrap();
+    assert!(call(&window, "recover_app_lock", json!({"recoveryCode":code,"newPassword":"fixture-C"})).is_err());
+    let normalized = replacement.to_ascii_lowercase().replace('-', " ");
+    assert!(call(&window, "recover_app_lock", json!({"recoveryCode":normalized,"newPassword":"short"})).is_err());
+    let recovered = call(&window, "recover_app_lock", json!({"recoveryCode":normalized,"newPassword":"fixture-C"})).unwrap();
+    assert_ne!(replacement, recovered["recovery_code"]);
+    assert_eq!(recovered["status"]["locked"], false);
+    assert_eq!(recovered["status"]["idle_timeout_minutes"], 30);
+    call(&window, "lock_app", json!({})).unwrap();
+    assert!(call(&window, "recover_app_lock", json!({"recoveryCode":replacement,"newPassword":"fixture-D"})).is_err());
+    assert!(call(&window, "unlock_app", json!({"password":"fixture-B"})).is_err());
+    call(&window, "unlock_app", json!({"password":"fixture-C"})).unwrap();
+    assert!(call(&window, "disable_app_lock", json!({"currentPassword":"fixture-B"})).is_err());
+    assert_eq!(call(&window, "disable_app_lock", json!({"currentPassword":"fixture-C"})).unwrap()["enabled"], false);
+    assert!(!path.exists());
+    assert_eq!(call(&window, "lock_app", json!({})).unwrap_err(), "尚未开启应用锁");
+}
+
+#[test]
+fn locked_dispatch_denies_everything_except_authentication_and_preserves_restore_block() {
+    let directory = tempfile::tempdir().unwrap();
+    let db = Database(Mutex::new(Connection::open_in_memory().unwrap()), AtomicBool::new(true));
+    let app = with_commands(mock_builder().manage(db).manage(app_lock::AppLock::load(directory.path().into())))
+        .build(mock_context(noop_assets())).unwrap();
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    call(&window, "setup_app_lock", json!({"password":"fixture-password"})).unwrap();
+    assert_eq!(call(&window, "lock_app", json!({})).unwrap()["locked"], true);
+    for command in [
+        "future_command", "desktop_status", "dashboard_summary", "list_records", "save_record",
+        "recovery_status", "apply_backup", "retry_rollback", "export_backup", "inspect_backup",
+        "export_plan_workbook", "export_plan_image", "export_scores", "export_records", "download_update_asset", "run_ai",
+        "lock_app", "setup_app_lock", "change_app_lock_password", "regenerate_recovery_code",
+        "update_app_lock_settings", "disable_app_lock",
+    ] {
+        assert_eq!(call(&window, command, json!({})).unwrap_err(), app_lock::LOCKED, "{command}");
+    }
+    assert_eq!(call(&window, "app_lock_status", json!({})).unwrap()["locked"], true);
+    let mut ran = false;
+    assert_eq!(app_lock::with_unlocked(app.handle(), || { ran = true; Ok(()) }).unwrap_err(), app_lock::LOCKED);
+    assert!(!ran);
+    assert_eq!(call(&window, "unlock_app", json!({"password":"fixture-password"})).unwrap()["locked"], false);
+    assert!(app.state::<Database>().1.load(std::sync::atomic::Ordering::Acquire));
+    assert!(app_lock::ensure_unlocked(app.handle()).is_ok());
+    assert!(call(&window, "dashboard_summary", json!({})).is_err());
+}
+
+#[test]
+fn protected_ipc_rejects_reads_and_writes_when_app_lock_is_missing() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    database::initialize(&mut connection).unwrap();
+    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+        .build(mock_context(noop_assets())).unwrap();
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    for (command, payload) in [
+        ("dashboard_summary", json!({})),
+        ("list_records", json!({"resource":"classes","classId":null})),
+        ("save_record", json!({
+            "resource":"classes", "expected":null,
+            "data":{"name":"测试班","school_stage":"小学","grade":"一年级","term":"上学期","subjects":"语文","active":1}
+        })),
+    ] {
+        assert_eq!(call(&window, command, payload).unwrap_err(), "应用锁暂不可用", "{command}");
+    }
+    let database = app.state::<Database>();
+    assert!(database::list(&database.connection().unwrap(), "classes", None).unwrap().is_empty());
+}
+
+#[test]
+fn export_commit_rechecks_the_lock_before_creating_or_replacing_a_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut connection = Connection::open_in_memory().unwrap();
+    database::initialize(&mut connection).unwrap();
+    connection.execute(
+        "INSERT INTO seat_class(id,name,school_stage,grade,term,subjects,active) VALUES(1,'测试班','初中','七年级','上学期','数学',1)",
+        [],
+    ).unwrap();
+    connection.execute(
+        "INSERT INTO seat_student(id,class_id,student_no,name,active) VALUES(1,1,'001','测试甲',1)",
+        [],
+    ).unwrap();
+    let exam_id = scores::save_exam(&mut connection, scores::Exam {
+        id: 0,
+        class_id: 1,
+        name: "期中".into(),
+        exam_date: "2026-11-01".into(),
+        remark: String::new(),
+        rank_grading: true,
+        is_current: true,
+        thresholds: [90, 80, 70, 60],
+        subjects: vec![scores::Subject {
+            id: 0,
+            name: "数学".into(),
+            full_score: 10000,
+            counts_toward_total: true,
+        }],
+    }, None).unwrap();
+    let score_template = spreadsheet::score_template(&connection, exam_id).unwrap();
+    let app = with_commands(mock_builder().manage(app_lock::AppLock::load(directory.path().into())))
+        .build(mock_context(noop_assets())).unwrap();
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    call(&window, "setup_app_lock", json!({"password":"fixture-password"})).unwrap();
+    let new_file = directory.path().join("new.xlsx");
+    let existing_file = directory.path().join("existing.xlsx");
+    let original = b"original workbook fixture";
+    let workbook = spreadsheet::records_workbook("classes", &[json!({"name":"测试班"})]).unwrap();
+    std::fs::write(&existing_file, original).unwrap();
+
+    // Simulate a lock after the save dialog's check and before the final rename.
+    app_lock::ensure_unlocked(app.handle()).unwrap();
+    call(&window, "lock_app", json!({})).unwrap();
+    for bytes in [&workbook, &score_template] {
+        for path in [&new_file, &existing_file] {
+            assert_eq!(plan_export::persist_locked_bytes(app.handle(), path, bytes).unwrap_err(), app_lock::LOCKED);
+        }
+    }
+    assert!(!new_file.exists());
+    assert_eq!(std::fs::read(&existing_file).unwrap(), original);
+
+    call(&window, "unlock_app", json!({"password":"fixture-password"})).unwrap();
+    plan_export::persist_locked_bytes(app.handle(), &existing_file, &workbook).unwrap();
+    assert_eq!(std::fs::read(&existing_file).unwrap(), workbook);
+    plan_export::persist_locked_bytes(app.handle(), &new_file, &score_template).unwrap();
+    assert_eq!(std::fs::read(&new_file).unwrap(), score_template);
+}
+
+#[test]
+fn unreadable_or_invalid_app_lock_config_fails_closed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app-lock.json");
+    let valid = {
+        let app = with_commands(mock_builder().manage(app_lock::AppLock::load(directory.path().into())))
+            .build(mock_context(noop_assets())).unwrap();
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        call(&window, "setup_app_lock", json!({"password":"fixture-password"})).unwrap();
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap()
+    };
+    let mut invalid_hash = valid.clone();
+    invalid_hash["recovery_hash"] = json!("$argon2id$v=19$m=999999,t=2,p=1$not-a-valid-hash");
+    let mut version = valid;
+    version["version"] = json!(2);
+    let verify = |directory: &std::path::Path| {
+        let app = with_commands(mock_builder().manage(app_lock::AppLock::load(directory.into())))
+            .build(mock_context(noop_assets())).unwrap();
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        let status = call(&window, "app_lock_status", json!({})).unwrap();
+        for property in ["enabled", "locked", "corrupted"] {
+            assert_eq!(status[property], true);
+        }
+        assert_eq!(call(&window, "about_info", json!({})).unwrap_err(), app_lock::LOCKED);
+        for (command, args) in [
+            ("unlock_app", json!({"password":"fixture-password"})),
+            ("recover_app_lock", json!({"recoveryCode":"ABCD-ABCD-ABCD-ABCD","newPassword":"fixture-new"})),
+        ] {
+            assert!(call(&window, command, args).unwrap_err().as_str().unwrap().contains("app-lock.json"));
+        }
+    };
+    for contents in ["{".to_string(), invalid_hash.to_string(), version.to_string()] {
+        std::fs::write(&path, contents).unwrap();
+        verify(directory.path());
+    }
+    let unreadable = tempfile::tempdir().unwrap();
+    std::fs::create_dir(unreadable.path().join("app-lock.json")).unwrap();
+    verify(unreadable.path());
+}
+
+#[test]
 fn model_discovery_only_sends_credentials_for_the_selected_service() {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
@@ -48,7 +259,9 @@ fn model_discovery_only_sends_credentials_for_the_selected_service() {
     }
 
     let storage = tempfile::tempdir().unwrap();
-    let app = with_commands(mock_builder().manage(ai::AiState::new(storage.path().into(), "test.endpoint".into())))
+    let app = with_commands(mock_builder()
+        .manage(ai::AiState::new(storage.path().into(), "test.endpoint".into()))
+        .manage(app_lock::AppLock::disabled()))
         .build(mock_context(noop_assets())).unwrap();
     let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
     let (a, received_a) = models_service(1);
@@ -71,7 +284,8 @@ fn model_discovery_only_sends_credentials_for_the_selected_service() {
 fn commands_accept_frontend_payloads_and_preserve_data_across_copy() {
     let mut connection = Connection::open_in_memory().unwrap();
     database::initialize(&mut connection).unwrap();
-    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default()))
+        .manage(app_lock::AppLock::disabled()))
         .build(mock_context(noop_assets())).unwrap();
     let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
     assert_eq!(call(&window, "desktop_status", json!({})).unwrap(), "本地服务已连接");
@@ -147,7 +361,8 @@ fn ipc_can_disable_legacy_rule_without_changing_its_config() {
     connection.execute(
         "INSERT INTO seat_rule(class_id,name,kind,weight,config,active) VALUES(1,'旧规则','HARD',1,?1,1)", [config]
     ).unwrap();
-    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default()))
+        .manage(app_lock::AppLock::disabled()))
         .build(mock_context(noop_assets())).unwrap();
     let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
     let original = call(&window, "list_records", json!({"resource":"rules","classId":1})).unwrap()[0].clone();
@@ -171,7 +386,8 @@ fn ipc_persists_complete_class_data_across_reopening() {
     let (class_id, before) = {
         let mut connection = Connection::open(&path).unwrap();
         database::initialize(&mut connection).unwrap();
-        let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+        let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default()))
+            .manage(app_lock::AppLock::disabled()))
             .build(mock_context(noop_assets())).unwrap();
         let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
         let class_id = call(&window, "save_record", json!({
@@ -211,7 +427,8 @@ fn ipc_persists_complete_class_data_across_reopening() {
     };
     let mut connection = Connection::open(&path).unwrap();
     database::initialize(&mut connection).unwrap();
-    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default()))
+        .manage(app_lock::AppLock::disabled()))
         .build(mock_context(noop_assets())).unwrap();
     let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
     for (index, resource) in resources.iter().enumerate() {
@@ -233,7 +450,8 @@ fn ipc_persists_complete_class_data_across_reopening() {
 fn ipc_rule_and_relation_lifecycle_rejects_conflicts_and_cross_class_links() {
     let mut connection = Connection::open_in_memory().unwrap();
     database::initialize(&mut connection).unwrap();
-    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default())))
+    let app = with_commands(mock_builder().manage(Database(Mutex::new(connection), Default::default()))
+        .manage(app_lock::AppLock::disabled()))
         .build(mock_context(noop_assets())).unwrap();
     let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
     let new_class = |name| call(&window, "save_record", json!({

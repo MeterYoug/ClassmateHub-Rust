@@ -6,8 +6,11 @@ import { setImmediate } from 'node:timers/promises'
 import { createRenderer } from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
+import { clearMocks, mockIPC, mockWindows } from '@tauri-apps/api/mocks'
+import { emit } from '@tauri-apps/api/event'
 import { renderPlan } from '../src/planExport.js'
+import { elementLocale, languages, locale, localizeMessage, setLocale, t as translate } from '../src/i18n.js'
+import { subjectLabel } from '../src/classOptions.js'
 
 // Exercise the component setup and IPC payloads without opening a desktop window.
 registerHooks({
@@ -19,13 +22,17 @@ registerHooks({
   },
 })
 const { default: Scores } = await import('../src/Scores.vue')
+const { default: Management } = await import('../src/Management.vue')
 const { default: DataTools } = await import('../src/DataTools.vue')
 const { default: Seating } = await import('../src/Seating.vue')
+const { default: App } = await import('../src/App.vue')
+const { default: LockScreen } = await import('../src/LockScreen.vue')
+const { default: SecurityLock } = await import('../src/SecurityLock.vue')
 const renderer = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
-globalThis.window = { atob, btoa }
+globalThis.window = Object.assign(new EventTarget(), { atob, btoa, crypto })
 
-async function mount(t, component, props, invoke) {
-  mockIPC(invoke)
+async function mount(t, component, props, invoke, options) {
+  mockIPC(invoke, options)
   let state
   const app = renderer.createApp({
     ...component,
@@ -39,6 +46,362 @@ async function mount(t, component, props, invoke) {
   await setImmediate()
   return state
 }
+
+const unlocked = { enabled: true, locked: false, corrupted: false, idle_timeout_minutes: 0, retry_after_seconds: 0 }
+const locked = { ...unlocked, locked: true }
+
+function desktopWindow(t) {
+  mockWindows('main')
+  globalThis.isTauri = true
+  t.after(() => { delete globalThis.isTauri })
+}
+
+test('cold start calls only status until unlock and then initializes the workspace once', async t => {
+  desktopWindow(t)
+  const calls = []
+  const state = await mount(t, App, {}, (command) => {
+    calls.push(command)
+    if (command === 'app_lock_status') return locked
+    return []
+  })
+  assert.equal(calls[0], 'app_lock_status')
+  assert.equal(state.workspaceReady.value, false)
+  assert.ok(!calls.includes('desktop_status'))
+  assert.ok(!calls.includes('dashboard_summary'))
+  assert.ok(!calls.includes('list_records'))
+  await state.enterWorkspace(unlocked)
+  assert.equal(state.workspaceReady.value, true)
+  assert.deepEqual(calls.filter(command => !command.startsWith('plugin:')), [
+    'app_lock_status', 'desktop_status', 'dashboard_summary', 'list_records',
+  ])
+  await state.enterWorkspace(unlocked)
+  assert.equal(calls.filter(command => command === 'dashboard_summary').length, 1)
+})
+
+test('a desktop status failure stays closed', async t => {
+  desktopWindow(t)
+  const state = await mount(t, App, {}, command => {
+    if (command === 'app_lock_status') throw new Error('fixture offline')
+    assert.match(command, /^plugin:/)
+  })
+  assert.equal(state.workspaceReady.value, false)
+  assert.equal(state.startupError.value, 'fixture offline')
+})
+
+test('browser preview starts without desktop lock IPC', async t => {
+  const calls = []
+  const preview = await mount(t, App, {}, command => { calls.push(command); return [] })
+  assert.equal(preview.workspaceReady.value, true)
+  assert.equal(preview.appLock.value.enabled, false)
+  assert.ok(!calls.includes('app_lock_status'))
+})
+
+test('shortcut lock keeps the editor and blocks closing with a draft while locked', async t => {
+  desktopWindow(t)
+  const calls = []
+  const draft = { value: '尚未保存的成绩', hasUnsavedChanges: () => true, isBusy: () => true }
+  let prompts = 0
+  t.mock.method(ElMessageBox, 'confirm', async () => { prompts++ })
+  const state = await mount(t, App, {}, command => {
+    calls.push(command)
+    if (command === 'app_lock_status') return unlocked
+    if (command === 'lock_app') {
+      assert.equal(state.appLock.value.locked, false)
+      return locked
+    }
+    return []
+  }, { shouldMockEvents: true })
+  state.page.value = 'scores'
+  state.activePage.value = draft
+  const shortcut = Object.assign(new Event('keydown', { cancelable: true }), {
+    code: 'KeyL', metaKey: true, shiftKey: true,
+  })
+  window.dispatchEvent(shortcut)
+  await setImmediate()
+  assert.ok(shortcut.defaultPrevented)
+  assert.equal(state.appLock.value.locked, true)
+  assert.equal(state.workspaceReady.value, true)
+  assert.equal(state.page.value, 'scores')
+  assert.equal(state.activePage.value.value, draft.value)
+  await emit('tauri://close-requested')
+  await setImmediate()
+  assert.equal(prompts, 0)
+  assert.ok(!calls.includes('plugin:window|destroy'))
+  assert.equal(state.closeBlocked.value, true)
+  await state.enterWorkspace(unlocked)
+  assert.equal(state.closeBlocked.value, false)
+  assert.equal(state.activePage.value.value, draft.value)
+  assert.equal(calls.filter(command => command === 'dashboard_summary').length, 1)
+  await state.lockWorkspace()
+  await state.refreshGlobalData()
+  assert.equal(calls.filter(command => command === 'dashboard_summary').length, 1)
+  await state.enterWorkspace(unlocked)
+  assert.equal(calls.filter(command => command === 'dashboard_summary').length, 2)
+  const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  assert.match(appSource, /v-if="workspaceReady"\s+v-show="!appLock\.locked"\s+:inert="appLock\.locked"/)
+  assert.match(appSource, /:close-blocked="closeBlocked"/)
+})
+
+test('closing is blocked during a pending lock with a draft and allowed after locking without a draft', async t => {
+  desktopWindow(t)
+  const pending = Promise.withResolvers()
+  const calls = []
+  const confirm = t.mock.method(ElMessageBox, 'confirm', async () => {})
+  const state = await mount(t, App, {}, command => {
+    calls.push(command)
+    if (command === 'app_lock_status') return unlocked
+    if (command === 'lock_app') return pending.promise
+    return []
+  }, { shouldMockEvents: true })
+  state.activePage.value = { hasUnsavedChanges: () => true }
+  const locking = state.lockWorkspace()
+  assert.equal(state.lockPending.value, true)
+  await emit('tauri://close-requested')
+  await setImmediate()
+  assert.equal(confirm.mock.callCount(), 0)
+  assert.ok(!calls.includes('plugin:window|destroy'))
+  assert.equal(state.closeBlocked.value, true)
+
+  pending.resolve(locked)
+  await locking
+  assert.equal(state.appLock.value.locked, true)
+  state.activePage.value = { hasUnsavedChanges: () => false }
+  await emit('tauri://close-requested')
+  await setImmediate()
+  assert.equal(confirm.mock.callCount(), 0)
+  assert.ok(calls.includes('plugin:window|destroy'))
+})
+
+test('accepting a draft close prompt checks whether the app locked during the prompt', async t => {
+  desktopWindow(t)
+  const confirmation = Promise.withResolvers()
+  const calls = []
+  const confirm = t.mock.method(ElMessageBox, 'confirm', () => confirmation.promise)
+  const state = await mount(t, App, {}, command => {
+    calls.push(command)
+    if (command === 'app_lock_status') return unlocked
+    if (command === 'lock_app') return locked
+    return []
+  }, { shouldMockEvents: true })
+  state.activePage.value = { hasUnsavedChanges: () => true }
+  await emit('tauri://close-requested')
+  await setImmediate()
+  assert.equal(confirm.mock.callCount(), 1)
+  await state.lockWorkspace()
+  confirmation.resolve()
+  await setImmediate()
+  assert.ok(!calls.includes('plugin:window|destroy'))
+  await state.enterWorkspace(unlocked)
+  await emit('tauri://close-requested')
+  await setImmediate()
+  assert.equal(confirm.mock.callCount(), 2)
+  assert.ok(calls.includes('plugin:window|destroy'))
+})
+
+test('activity resets the idle lock timer and an off setting clears it', async t => {
+  desktopWindow(t)
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let lockCalls = 0
+  const timeout = { ...unlocked, idle_timeout_minutes: 5 }
+  const state = await mount(t, App, {}, command => {
+    if (command === 'app_lock_status') return timeout
+    if (command === 'lock_app') { lockCalls++; return { ...timeout, locked: true } }
+    return []
+  })
+  t.mock.timers.tick(299_000)
+  window.dispatchEvent(new Event('wheel'))
+  t.mock.timers.tick(299_000)
+  assert.equal(lockCalls, 0)
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  assert.equal(lockCalls, 1)
+  await state.enterWorkspace(timeout)
+  await setImmediate()
+  state.updateLockSettings(unlocked)
+  await setImmediate()
+  t.mock.timers.tick(600_000)
+  assert.equal(lockCalls, 1)
+})
+
+test('lock screen handles cooldown and keeps the workspace hidden until the new code is acknowledged', async t => {
+  let status = locked
+  const calls = []
+  const recovered = []
+  const screen = await mount(t, LockScreen, { status: locked, onUnlocked: value => recovered.push(value) }, (command, args) => {
+    calls.push([command, args])
+    if (command === 'unlock_app') throw '密码错误次数过多，请在 5 秒后重试'
+    if (command === 'app_lock_status') return status
+    return { status: unlocked, recovery_code: 'ABCD-ABCD-ABCD-ABCD' }
+  })
+  status = { ...locked, retry_after_seconds: 5 }
+  screen.password.value = 'wrong-password'
+  await screen.submit()
+  assert.equal(screen.retrySeconds.value, 5)
+  assert.equal(screen.password.value, '')
+  await screen.switchForm()
+  await screen.submit()
+  assert.equal(calls.length, 2)
+  screen.retrySeconds.value = 0
+  screen.recoveryCode.value = 'abcd abcd abcd abcd'
+  screen.newPassword.value = 'new-password'
+  screen.confirmation.value = 'different'
+  await screen.submit()
+  assert.equal(calls.length, 2)
+  screen.confirmation.value = 'new-password'
+  await screen.submit()
+  assert.deepEqual(calls.at(-1), ['recover_app_lock', {
+    recoveryCode: 'abcd abcd abcd abcd', newPassword: 'new-password',
+  }])
+  assert.equal(recovered.length, 0)
+  assert.equal(screen.result.value.recovery_code, 'ABCD-ABCD-ABCD-ABCD')
+  await screen.confirmSaved()
+  assert.equal(recovered.length, 0)
+  screen.saved.value = true
+  status = { ...unlocked, idle_timeout_minutes: 10 }
+  await screen.confirmSaved()
+  assert.deepEqual(calls.at(-1), ['app_lock_status', {}])
+  assert.deepEqual(recovered, [status])
+  assert.equal(screen.result.value, null)
+})
+
+async function recoverPassword(screen) {
+  await screen.switchForm()
+  screen.recoveryCode.value = 'abcd abcd abcd abcd'
+  screen.newPassword.value = screen.confirmation.value = 'new-password'
+  await screen.submit()
+  assert.equal(screen.result.value.recovery_code, 'ABCD-ABCD-ABCD-ABCD')
+  screen.saved.value = true
+  screen.copyMessage.value = '已复制恢复码'
+}
+
+function assertRecoveryCleared(screen) {
+  assert.equal(screen.result.value, null)
+  assert.equal(screen.recovering.value, false)
+  assert.equal(screen.saved.value, false)
+  assert.equal(screen.copyMessage.value, '')
+  assert.equal(screen.password.value, '')
+}
+
+test('recovery code display resets its idle timer on activity and clears immediately when locking', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const status = { ...unlocked, idle_timeout_minutes: 5 }
+  const pending = Promise.withResolvers()
+  const calls = []
+  const screen = await mount(t, LockScreen, { status: locked }, command => {
+    calls.push(command)
+    if (command === 'lock_app') return pending.promise
+    if (command === 'unlock_app') return status
+    return { status, recovery_code: 'ABCD-ABCD-ABCD-ABCD' }
+  })
+  await recoverPassword(screen)
+  t.mock.timers.tick(299_000)
+  window.dispatchEvent(new Event('wheel'))
+  t.mock.timers.tick(299_000)
+  assert.ok(screen.result.value)
+  assert.deepEqual(calls, ['recover_app_lock'])
+  t.mock.timers.tick(1000)
+  assert.deepEqual(calls, ['recover_app_lock', 'lock_app'])
+  assertRecoveryCleared(screen)
+  assert.equal(screen.busy.value, true)
+  pending.resolve(locked)
+  await setImmediate()
+  screen.password.value = 'new-password'
+  await screen.submit()
+  assert.equal(calls.at(-1), 'unlock_app')
+})
+
+test('acknowledging a recovery code keeps the workspace closed when the latest status is locked', async t => {
+  const calls = []
+  const recovered = []
+  const screen = await mount(t, LockScreen, { status: locked, onUnlocked: status => recovered.push(status) }, command => {
+    calls.push(command)
+    if (command === 'app_lock_status') return locked
+    return { status: unlocked, recovery_code: 'ABCD-ABCD-ABCD-ABCD' }
+  })
+  await recoverPassword(screen)
+  await screen.confirmSaved()
+  assert.deepEqual(calls, ['recover_app_lock', 'app_lock_status'])
+  assert.deepEqual(recovered, [])
+  assertRecoveryCleared(screen)
+})
+
+test('recovery shortcut clears the code and prevents a concurrent status response from unlocking', async t => {
+  const pending = Promise.withResolvers()
+  const calls = []
+  const recovered = []
+  const screen = await mount(t, LockScreen, { status: locked, onUnlocked: status => recovered.push(status) }, command => {
+    calls.push(command)
+    if (command === 'app_lock_status') return pending.promise
+    if (command === 'lock_app') return locked
+    return { status: unlocked, recovery_code: 'ABCD-ABCD-ABCD-ABCD' }
+  })
+  await recoverPassword(screen)
+  const confirming = screen.confirmSaved()
+  const shortcut = Object.assign(new Event('keydown', { cancelable: true }), {
+    code: 'KeyL', ctrlKey: true, shiftKey: true,
+  })
+  window.dispatchEvent(shortcut)
+  assert.ok(shortcut.defaultPrevented)
+  assertRecoveryCleared(screen)
+  pending.resolve(unlocked)
+  await confirming
+  assert.deepEqual(calls, ['recover_app_lock', 'app_lock_status', 'lock_app'])
+  assert.deepEqual(recovered, [])
+})
+
+test('security settings send password confirmations and show the returned recovery code once', async t => {
+  const calls = []
+  const statusChanges = []
+  const state = await mount(t, SecurityLock, {
+    desktop: true, status: { ...unlocked, enabled: false }, onStatusChange: status => statusChanges.push(status),
+  }, (command, args) => {
+    calls.push([command, args])
+    if (command === 'setup_app_lock') return { status: unlocked, recovery_code: 'ABCD-ABCD-ABCD-ABCD' }
+    return unlocked
+  })
+  state.newPassword.value = '設定したパスワード'
+  await state.setup()
+  assert.equal(calls.length, 0)
+  assert.equal(state.hasUnsavedChanges(), true)
+  state.confirmation.value = state.newPassword.value
+  state.setupTimeout.value = 10
+  await state.setup()
+  assert.deepEqual(calls[0], ['setup_app_lock', { password: '設定したパスワード', idleTimeoutMinutes: 10 }])
+  assert.equal(state.newPassword.value, '')
+  assert.equal(state.setupTimeout.value, 0)
+  state.saved.value = true
+  state.confirmSaved()
+  assert.equal(state.recoveryCode.value, '')
+  state.openAction('change')
+  state.currentPassword.value = '設定したパスワード'
+  state.newPassword.value = state.confirmation.value = 'new-password'
+  await state.submitAction()
+  assert.deepEqual(calls[1], ['change_app_lock_password', {
+    currentPassword: '設定したパスワード', newPassword: 'new-password',
+  }])
+  assert.equal(state.currentPassword.value, '')
+  assert.deepEqual(statusChanges, [unlocked, unlocked])
+})
+
+test('app lock errors localize cooldown arguments and corruption guidance across five locales', t => {
+  t.after(() => setLocale('zh-Hans'))
+  const template = '密码错误次数过多，请在 {0} 秒后重试'
+  const message = '密码错误次数过多，请在 15 秒后重试'
+  const corrupted = '应用锁配置损坏。请检查或移除应用数据目录中的 app-lock.json，再重新启动。'
+  const closeBlocked = '当前存在未保存的修改，请先解锁后再关闭窗口。'
+  for (const language of languages) {
+    setLocale(language.id)
+    assert.equal(localizeMessage(message), translate(template, 15))
+    assert.ok(localizeMessage(message).includes('15'))
+    assert.ok(localizeMessage(corrupted).includes('app-lock.json'))
+    if (language.id !== 'zh-Hans') {
+      assert.notEqual(localizeMessage(message), message)
+      assert.notEqual(localizeMessage(corrupted), corrupted)
+      assert.notEqual(translate(closeBlocked), closeBlocked)
+      assert.notEqual(translate('应用锁'), '应用锁')
+    }
+  }
+})
 
 test('model discovery, connection test and save use the current endpoint', async t => {
   const calls = []
@@ -140,6 +503,116 @@ test('score, exam and template drawers preserve edits on cancel and guard pendin
   assert.equal(saves, 1)
   assert.equal(form.scoreDraft.value.student_id, 2)
   assert.equal(form.dirty.value, false)
+})
+
+test('language preferences persist and localize nested messages without rewriting file paths or names', async t => {
+  const settings = new Map()
+  window.localStorage = {
+    getItem: key => settings.get(key) ?? null,
+    setItem: (key, value) => settings.set(key, value),
+  }
+  globalThis.document = { documentElement: { lang: 'zh-Hans' } }
+  t.after(() => {
+    setLocale('zh-Hans')
+    delete window.localStorage
+    delete globalThis.document
+  })
+  assert.deepEqual(languages.map(({ id }) => id), ['zh-Hans', 'en', 'zh-Hant', 'ja', 'ko'])
+  for (const [id, label, elementName] of [
+    ['zh-Hans', '智能排座', 'zh-cn'],
+    ['en', 'Seating', 'en'],
+    ['zh-Hant', '智能排座', 'zh-tw'],
+    ['ja', '座席配置', 'ja'],
+    ['ko', '좌석 배정', 'ko'],
+  ]) {
+    setLocale(id)
+    assert.equal(translate('智能排座'), label)
+    assert.equal(elementLocale().name, elementName)
+    assert.equal(document.documentElement.lang, id)
+  }
+  setLocale('es')
+  assert.equal(locale.value, 'ko')
+  assert.equal(settings.get('classmatehub.locale'), 'ko')
+  const reopened = await import('../src/i18n.js?test-reopen-language')
+  assert.equal(reopened.locale.value, 'ko')
+
+  setLocale('en')
+  assert.equal(subjectLabel('数学'), 'Mathematics')
+  assert.equal(subjectLabel('学号'), '学号')
+  assert.equal(
+    localizeMessage('第 3 行第 5 列：分数超过科目满分'),
+    "Row 3, column 5: The score exceeds the subject's maximum.",
+  )
+  assert.equal(
+    localizeMessage('锁座冲突：「工作台」与「学生」不能同桌'),
+    'Seat lock conflict: “工作台” and “学生” cannot share a desk.',
+  )
+  const path = 'E:/Synthetic/成绩资料.exe'
+  assert.ok(localizeMessage(`新版安装包已保存到：${path}。请先关闭班伴，再运行安装包覆盖升级。`).includes(path))
+})
+
+test('localized absent input keeps the existing score command value', async t => {
+  const exam = { id: 1, class_id: 1, name: 'Test exam', is_current: true, subjects: [{ id: 1, name: '数学', full_score: 10000 }] }
+  const row = { student_id: 1, student_no: '01', name: 'Test student', details: [], remark: '', active: true }
+  let saved
+  t.mock.method(ElMessage, 'success', () => {})
+  const form = await mount(t, Scores, { classId: 1 }, (command, args) => {
+    if (command === 'list_exams') return [exam]
+    if (command === 'list_scores') return [row]
+    if (command === 'save_scores') saved = args.input
+    return []
+  })
+  setLocale('ja')
+  t.after(() => setLocale('zh-Hans'))
+  await form.editScore(row)
+  form.updateScoreInput(1, '欠席')
+  assert.equal(form.scoreDraft.value.values[1], '缺考')
+  setLocale('ko')
+  assert.equal(form.scoreDraft.value.values[1], '缺考')
+  await form.saveScore()
+  assert.deepEqual(saved, [{ student_id: 1, subject_id: 1, value: '缺考' }])
+})
+
+test('score export and score template send native save arguments and only report success after saving', async t => {
+  setLocale('ja')
+  t.after(() => setLocale('zh-Hans'))
+  const success = t.mock.method(ElMessage, 'success', () => {})
+  const exports = []
+  const templates = []
+  const form = await mount(t, Scores, { classId: 1 }, (command, args) => {
+    if (command === 'list_exams') return [{ id: 7, is_current: true, subjects: [] }]
+    if (command === 'export_scores') return exports.push(args) > 1
+    if (command === 'score_template') return templates.push(args) > 1
+    return []
+  })
+  form.exportByStudentNo.value = true
+  await form.download(true)
+  assert.deepEqual(exports, [{ examId: 7, byStudentNo: true, locale: 'ja' }])
+  assert.equal(success.mock.callCount(), 0)
+  await form.download(true)
+  assert.equal(success.mock.callCount(), 1)
+  await form.download(false)
+  assert.deepEqual(templates, [{ examId: 7, locale: 'ja' }])
+  assert.equal(success.mock.callCount(), 1)
+  await form.download(false)
+  assert.equal(success.mock.callCount(), 2)
+})
+
+test('records export sends the localized default name and only reports success after saving', async t => {
+  setLocale('ja')
+  t.after(() => setLocale('zh-Hans'))
+  const success = t.mock.method(ElMessage, 'success', () => {})
+  const exports = []
+  const form = await mount(t, Management, { section: 'classes', classId: 1 }, (command, args) => {
+    if (command === 'list_records' && args.resource === 'classes') return [{ id: 1, name: 'Fixture class' }]
+    if (command === 'export_records') return exports.push(args) > 1
+    return []
+  })
+  await form.exportRecords()
+  assert.deepEqual(exports, [{ resource: 'classes', classId: 1, ids: [1], locale: 'ja', filename: 'クラスの情報.xlsx' }])
+  assert.equal(success.mock.callCount(), 0)
+  await form.exportRecords()
+  assert.equal(success.mock.callCount(), 1)
 })
 
 test('seating views reverse the display while keeping the original seats and assignments', async t => {

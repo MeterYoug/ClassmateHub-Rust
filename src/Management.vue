@@ -1,4 +1,5 @@
 <script setup>
+import { locale, localizeMessage, t } from './i18n.js'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -17,7 +18,7 @@ import {
 } from 'element-plus'
 import { CopyDocument, Download, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import LayoutEditor from './LayoutEditor.vue'
-import { classGrades, classSubjects, nextSchoolTerm, splitSubjects, termLabel, terms } from './classOptions.js'
+import { classGrades, classSubjects, nextSchoolTerm, splitSubjects, subjectLabel, termLabel, terms } from './classOptions.js'
 import { downloadWorkbook, workbookBytes } from './workbook.js'
 import { confirmAction, notifyError, notifyInfo, notifySuccess, notifyWarning } from './ui.js'
 
@@ -230,30 +231,38 @@ function knownRule(item) {
 
 function ruleSummary(record) {
   const code = knownRule(record)
-  if (!code) return '既有自定义／异常配置'
+  if (!code) return t('既有自定义／异常配置')
   const meta = ruleTypes.find(item => item.code === code)
   const config = parsedRule(record)
-  if (!studentRules.includes(code)) return meta.label
+  if (!studentRules.includes(code)) return t(meta.label)
   const names = configuredStudents(config).map(id => {
     const student = studentMap.value.get(id)
-    return student ? `${student.name}${student.active ? '' : '（停用）'}` : `#${id}`
+    return student ? `${student.name}${student.active ? '' : t('（停用）')}` : `#${id}`
   })
-  const namePreview = names.length > 4 ? `${names.slice(0, 4).join('、')} 等 ${names.length} 人` : names.join('、')
-  if (code === 'FRONT_ROW') return `前 ${config.max_row} 排：${namePreview}`
-  return `${meta.label}：${namePreview}`
+  const namePreview = names.length > 4 ? t('{0} 等 {1} 人', names.slice(0, 4).join('、'), names.length) : names.join('、')
+  if (code === 'FRONT_ROW') return t('前 {0} 排：{1}', config.max_row, namePreview)
+  return t('{0}：{1}', t(meta.label), namePreview)
 }
 
+const referenceFields = ['classroom_id', 'student_id', 'other_student_id']
 const choices = field =>
   field.key === 'classroom_id'
-    ? classrooms.value.map(item => [item.id, `${item.name}${item.active ? '' : '（停用）'}`, !item.active])
+    ? classrooms.value.map(item => [item.id, `${item.name}${item.active ? '' : t('（停用）')}`, !item.active])
     : ['student_id', 'other_student_id'].includes(field.key)
-      ? students.value.map(item => [item.id, `${item.student_no} · ${item.name}${item.active ? '' : '（停用）'}`, !item.active])
+      ? students.value.map(item => [item.id, `${item.student_no} · ${item.name}${item.active ? '' : t('（停用）')}`, !item.active])
       : field.options
 
 const display = (field, value, record) => {
   if (field.key === 'term') return termLabel(value)
   if (section.value === 'rules' && field.key === 'config') return ruleSummary(record)
   return (choices(field) || []).find(option => option[0] === value)?.[1] ?? (value === '' || value == null ? '—' : value)
+}
+
+function recordLabel(field, value, record) {
+  const label = display(field, value, record)
+  if (field.key === 'subjects') return splitSubjects(value ?? '').map(subjectLabel).join(', ') || '—'
+  if (referenceFields.includes(field.key)) return label
+  return field.options || ['grade', 'school_stage', 'term'].includes(field.key) ? t(label) : label
 }
 
 const filterOptions = field => {
@@ -272,7 +281,10 @@ const visibleRecords = computed(() => {
     item =>
       (statusFilter.value === 'all' || String(item.active) === statusFilter.value) &&
       filterFields.value.every(field => !filters.value[field.key] || display(field, item[field.key], item) === filters.value[field.key]) &&
-      (!query || current.value.fields.some(field => String(display(field, item[field.key], item)).toLowerCase().includes(query))),
+      (!query || current.value.fields.some(field => (
+        String(display(field, item[field.key], item)).toLowerCase().includes(query) ||
+        String(recordLabel(field, item[field.key], item)).toLowerCase().includes(query)
+      ))),
   )
 })
 
@@ -676,13 +688,15 @@ function importStudents() {
 function exportRecords() {
   return workbookAction(async () => {
     const items = selectedRecords.value.length ? selectedRecords.value : visibleRecords.value
-    const data = await invoke('export_records', {
+    const label = t(current.value.label)
+    const saved = await invoke('export_records', {
       resource: section.value,
       classId: props.classId,
       ids: items.map(item => item.id),
+      locale: locale.value,
+      filename: t('{0}资料.xlsx', label),
     })
-    downloadWorkbook(data, `${current.value.label}资料.xlsx`)
-    notifySuccess(`已导出 ${items.length} 条${current.value.label}资料`)
+    if (saved) notifySuccess(t('已导出 {0} 条{1}资料', items.length, label))
   })
 }
 
@@ -690,7 +704,7 @@ async function deactivateSelection() {
   const expected = selectedRecords.value.filter(item => item.active)
   if (!expected.length) return
   if (!(await canLeaveDraft())) return
-  const ok = await confirmAction(`确定停用选中的 ${expected.length} 条${current.value.label}资料？停用后不会参与新排座，历史方案不受影响。`, {
+  const ok = await confirmAction(t('确定停用选中的 {0} 条{1}资料？停用后不会参与新排座，历史方案不受影响。', expected.length, t(current.value.label)), {
     title: '批量停用确认',
     confirmText: '确认停用',
     type: 'warning',
@@ -844,7 +858,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 <template>
   <div class="page-container">
     <div v-if="section !== 'classes' && !classId" class="page-card">
-      <ElEmpty description="请先在「班级管理」创建班级，或在顶部选择一个班级" />
+      <ElEmpty :description="t('请先在「班级管理」创建班级，或在顶部选择一个班级')" />
     </div>
 
     <template v-else>
@@ -856,10 +870,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             :disabled="loading || saving || (section !== 'classes' && !classId)"
             @click="edit()"
           >
-            新增{{ current.label }}
+            {{ t('新增{0}', t(current.label)) }}
           </ElButton>
           <ElButton v-if="section === 'students'" :icon="Upload" :disabled="saving || !classId" @click="openStudentImport">
-            导入学生
+            {{ t('导入学生') }}
           </ElButton>
           <ElButton
             v-if="['classes', 'students', 'classrooms', 'rules'].includes(section)"
@@ -867,42 +881,42 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             :disabled="saving || !visibleRecords.length"
             @click="exportRecords"
           >
-            {{ selectedRecords.length ? `导出选中 (${selectedRecords.length})` : '导出 Excel' }}
+            {{ selectedRecords.length ? t('导出选中 ({0})', selectedRecords.length) : t('导出 Excel') }}
           </ElButton>
         </div>
-        <span class="form-hint">共 {{ visibleRecords.length }} 条{{ current.label }}记录</span>
+        <span class="form-hint">{{ t('共 {0} 条{1}记录', visibleRecords.length, t(current.label)) }}</span>
       </div>
 
       <div class="filter-bar">
         <ElInput
           v-model="search"
           clearable
-          :placeholder="`搜索${current.label}资料`"
+          :placeholder="t('搜索{0}资料', t(current.label))"
           :prefix-icon="Search"
           style="width: 210px"
         />
         <div class="filter-item">
-          <span>状态</span>
+          <span>{{ t('状态') }}</span>
           <ElSelect v-model="statusFilter" style="width: 100px">
-            <ElOption label="全部" value="all" />
-            <ElOption label="正常" value="1" />
-            <ElOption label="停用" value="0" />
+            <ElOption :label="t('全部')" value="all" />
+            <ElOption :label="t('正常')" value="1" />
+            <ElOption :label="t('停用')" value="0" />
           </ElSelect>
         </div>
         <div v-for="field in filterFields" :key="field.key" class="filter-item">
-          <span>{{ field.label }}</span>
-          <ElSelect v-model="filters[field.key]" clearable placeholder="全部" style="width: 126px">
-            <ElOption v-for="option in filterOptions(field)" :key="option" :label="option" :value="option" />
+          <span>{{ t(field.label) }}</span>
+          <ElSelect v-model="filters[field.key]" clearable :placeholder="t('全部')" style="width: 126px">
+            <ElOption v-for="option in filterOptions(field)" :key="option" :label="t(option)" :value="option" />
           </ElSelect>
         </div>
-        <ElButton :icon="Refresh" :disabled="saving" @click="clearFilters">重置</ElButton>
+        <ElButton :icon="Refresh" :disabled="saving" @click="clearFilters">{{ t('重置') }}</ElButton>
       </div>
 
       <div v-if="selectedRecords.length" class="selection-bar">
-        <span>已选择 <strong>{{ selectedRecords.length }}</strong> 条{{ current.label }}资料</span>
+        <span>{{ t('已选择 {0} 条{1}资料', selectedRecords.length, t(current.label)) }}</span>
         <div class="action-group">
           <ElButton size="small" :disabled="saving || selectedRecords.length !== 1" @click="edit(selectedRecords[0])">
-            修改选中
+            {{ t('修改选中') }}
           </ElButton>
           <ElButton
             size="small"
@@ -911,16 +925,16 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             :disabled="saving || !selectedRecords.some(item => item.active)"
             @click="deactivateSelection"
           >
-            批量停用 ({{ selectedRecords.filter(item => item.active).length }})
+            {{ t('批量停用 (') }}{{ selectedRecords.filter(item => item.active).length }})
           </ElButton>
-          <ElButton size="small" text @click="tableRef?.clearSelection()">取消选择</ElButton>
+          <ElButton size="small" text @click="tableRef?.clearSelection()">{{ t('取消选择') }}</ElButton>
         </div>
       </div>
 
-      <ElAlert v-if="loadError" type="error" show-icon :closable="false" title="列表加载失败" style="margin-bottom: 12px">
+      <ElAlert v-if="loadError" type="error" show-icon :closable="false" :title="t('列表加载失败')" style="margin-bottom: 12px">
         <template #default>
-          <p style="margin: 4px 0 8px">{{ loadError }}</p>
-          <ElButton size="small" @click="retryLoad">重新加载</ElButton>
+          <p style="margin: 4px 0 8px">{{ localizeMessage(loadError) }}</p>
+          <ElButton size="small" @click="retryLoad">{{ t('重新加载') }}</ElButton>
         </template>
       </ElAlert>
 
@@ -931,7 +945,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
           :data="visibleRecords"
           row-key="id"
           stripe
-          empty-text="暂无符合条件的记录"
+          :empty-text="t('暂无符合条件的记录')"
           @selection-change="selection = $event"
         >
           <ElTableColumn type="selection" width="44" fixed="left" />
@@ -939,17 +953,17 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
           <ElTableColumn
             v-for="(field, index) in current.fields"
             :key="field.key"
-            :label="field.label"
+            :label="t(field.label)"
             :min-width="colMinWidth(field)"
             :fixed="index === 0 ? 'left' : false"
             show-overflow-tooltip
           >
             <template #default="{ row }">
               <ElTag v-if="field.key === 'active'" size="small" :type="row.active ? 'success' : 'info'" effect="light">
-                {{ row.active ? '正常' : '停用' }}
+                {{ row.active ? t('正常') : t('停用') }}
               </ElTag>
               <ElTag v-else-if="field.key === 'is_default'" size="small" :type="row.is_default ? 'success' : 'info'" effect="plain">
-                {{ row.is_default ? '默认布局' : '普通' }}
+                {{ row.is_default ? t('默认布局') : t('普通') }}
               </ElTag>
               <ElTag
                 v-else-if="section === 'rules' && field.key === 'kind'"
@@ -957,7 +971,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
                 :type="row.kind === 'HARD' ? 'danger' : 'primary'"
                 effect="light"
               >
-                {{ row.kind === 'HARD' ? '硬规则' : '软规则' }}
+                {{ row.kind === 'HARD' ? t('硬规则') : t('软规则') }}
               </ElTag>
               <ElTag
                 v-else-if="section === 'rules' && field.key === 'enabled'"
@@ -965,10 +979,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
                 :type="row.enabled ? 'success' : 'info'"
                 effect="plain"
               >
-                {{ row.enabled ? '已启用' : '未启用' }}
+                {{ row.enabled ? t('已启用') : t('未启用') }}
               </ElTag>
               <template v-else-if="section === 'rules' && field.key === 'config'">
-                <ElTag v-if="!knownRule(row)" size="small" type="warning" effect="light">既有自定义／异常配置</ElTag>
+                <ElTag v-if="!knownRule(row)" size="small" type="warning" effect="light">{{ t('既有自定义／异常配置') }}</ElTag>
                 <span v-else>{{ ruleSummary(row) }}</span>
               </template>
               <ElTag
@@ -979,20 +993,20 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
               >
                 {{ row.score_level }}
               </ElTag>
-              <span v-else>{{ display(field, row[field.key], row) }}</span>
+              <span v-else>{{ recordLabel(field, row[field.key], row) }}</span>
             </template>
           </ElTableColumn>
 
-          <ElTableColumn label="操作" :width="section === 'classes' ? 175 : section === 'classrooms' ? 170 : 90" fixed="right">
+          <ElTableColumn :label="t('操作')" :width="section === 'classes' ? 175 : section === 'classrooms' ? 170 : 90" fixed="right">
             <template #default="{ row }">
               <ElButton link type="primary" :disabled="saving" @click="edit(row)">
-                {{ section === 'classrooms' ? '编辑与布局' : '编辑' }}
+                {{ section === 'classrooms' ? t('编辑与布局') : t('编辑') }}
               </ElButton>
               <ElButton v-if="section === 'classes'" link type="primary" :icon="CopyDocument" :disabled="saving" @click="beginCopy(row)">
-                复制到新学期
+                {{ t('复制到新学期') }}
               </ElButton>
               <ElButton v-if="section === 'classrooms'" link type="info" :disabled="saving" @click="openPositionsDrawer(row)">
-                座位明细
+                {{ t('座位明细') }}
               </ElButton>
             </template>
           </ElTableColumn>
@@ -1003,19 +1017,19 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     <!-- 新增／编辑抽屉 -->
     <ElDrawer
       :model-value="!!form"
-      :title="`${form?.id ? '编辑' : '新增'}${current.label}`"
+      :title="t(form?.id ? '编辑{0}' : '新增{0}', t(current.label))"
       :size="section === 'classrooms' ? 'min(94vw, 960px)' : 'min(92vw, 560px)'"
       :before-close="handleFormDrawerClose"
       destroy-on-close
     >
       <div v-if="form" class="drawer-form">
-        <p class="required-legend"><span>*</span> 为必填项</p>
+        <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
         <div class="form-grid-2">
           <div v-if="section === 'rules'" class="form-field">
-            <span class="form-label is-required">规则类型</span>
+            <span class="form-label is-required">{{ t('规则类型') }}</span>
             <ElSelect v-model="ruleType" :disabled="saving || !!form.id" @change="updateRuleType">
-              <ElOption v-if="ruleType === 'legacy'" label="既有自定义规则" value="legacy" />
-              <ElOption v-for="type in ruleTypes" :key="type.code" :label="type.label" :value="type.code" />
+              <ElOption v-if="ruleType === 'legacy'" :label="t('既有自定义规则')" value="legacy" />
+              <ElOption v-for="type in ruleTypes" :key="type.code" :label="t(type.label)" :value="type.code" />
             </ElSelect>
           </div>
           <div
@@ -1024,52 +1038,52 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             :class="{ 'is-error': !!formErrors.ruleStudents }"
           >
             <span class="form-label is-required">
-              指定学生
-              <span class="form-label-note">{{ ruleType === 'FRONT_ROW' ? '至少选择 1 人' : '至少选择 2 人' }}</span>
+              {{ t('指定学生') }}
+              <span class="form-label-note">{{ ruleType === 'FRONT_ROW' ? t('至少选择 1 人') : t('至少选择 2 人') }}</span>
             </span>
             <ElSelect
               v-model="ruleStudents"
               multiple
               filterable
               :disabled="saving"
-              :placeholder="ruleType === 'FRONT_ROW' ? '请至少选择 1 名学生' : '请至少选择 2 名学生'"
+              :placeholder="ruleType === 'FRONT_ROW' ? t('请至少选择 1 名学生') : t('请至少选择 2 名学生')"
               @change="clearError(formErrors, 'ruleStudents')"
             >
               <ElOption
                 v-for="student in students"
                 :key="student.id"
-                :label="`${student.student_no} · ${student.name}${student.active ? '' : '（停用）'}`"
+                :label="`${student.student_no} · ${student.name}${student.active ? '' : t('（停用）')}`"
                 :value="student.id"
                 :disabled="!student.active && !ruleStudents.includes(student.id)"
               />
             </ElSelect>
-            <p v-if="formErrors.ruleStudents" class="form-error">{{ formErrors.ruleStudents }}</p>
+            <p v-if="formErrors.ruleStudents" class="form-error">{{ localizeMessage(formErrors.ruleStudents) }}</p>
           </div>
           <div
             v-if="section === 'rules' && ruleType === 'FRONT_ROW'"
             class="form-field"
             :class="{ 'is-error': !!formErrors.ruleMaxRow }"
           >
-            <span class="form-label is-required">限坐前几排</span>
+            <span class="form-label is-required">{{ t('限坐前几排') }}</span>
             <ElInput
               v-model.number="ruleMaxRow"
               type="number"
               :min="1"
               :max="Math.max(10, parsedRule(originalRecord || {}).max_row || 0)"
-              placeholder="请输入 1 至 50 的整数"
+              :placeholder="t('请输入 1 至 50 的整数')"
               :disabled="saving"
               @input="clearError(formErrors, 'ruleMaxRow')"
             />
-            <p v-if="formErrors.ruleMaxRow" class="form-error">{{ formErrors.ruleMaxRow }}</p>
+            <p v-if="formErrors.ruleMaxRow" class="form-error">{{ localizeMessage(formErrors.ruleMaxRow) }}</p>
           </div>
 
           <template v-for="field in current.fields" :key="field.key">
             <div v-if="field.key === 'subjects'" class="form-field full-span" :class="{ 'is-error': !!formErrors.subjects }">
-              <span class="form-label is-required">{{ field.label }}<span class="form-label-note">至少选择 1 门</span></span>
-              <ElSelect v-model="selectedSubjects" multiple filterable :placeholder="field.placeholder || '请选择班级科目'" :disabled="saving">
-                <ElOption v-for="subject in subjectChoices" :key="subject" :label="subject" :value="subject" />
+              <span class="form-label is-required">{{ t(field.label) }}<span class="form-label-note">{{ t('至少选择 1 门') }}</span></span>
+              <ElSelect v-model="selectedSubjects" multiple filterable :placeholder="t(field.placeholder || '请选择班级科目')" :disabled="saving">
+                <ElOption v-for="subject in subjectChoices" :key="subject" :label="subjectLabel(subject)" :value="subject" />
               </ElSelect>
-              <p v-if="formErrors.subjects" class="form-error">{{ formErrors.subjects }}</p>
+              <p v-if="formErrors.subjects" class="form-error">{{ localizeMessage(formErrors.subjects) }}</p>
             </div>
             <div
               v-else-if="section !== 'rules' || field.key !== 'config'"
@@ -1077,32 +1091,32 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
               :class="{ 'is-error': !!formErrors[field.key] }"
             >
               <span class="form-label" :class="{ 'is-required': !!field.required }">
-                {{ field.label }}
+                {{ t(field.label) }}
                 <span v-if="field.note && !(section === 'rules' && field.key === 'kind' && ruleType === 'legacy')" class="form-label-note">
-                  {{ field.note }}
+                  {{ t(field.note) }}
                 </span>
               </span>
               <ElSelect
                 v-if="field.key === 'grade'"
                 v-model="form.grade"
                 :disabled="saving"
-                :placeholder="field.placeholder || '请选择年级'"
+                :placeholder="t(field.placeholder || '请选择年级')"
                 @change="changeGrade"
               >
-                <ElOption v-for="grade in classGrades" :key="grade.name" :label="grade.name" :value="grade.name" />
-                <ElOption v-if="legacyGrade" :label="`${legacyGrade}（原值）`" :value="legacyGrade" />
+                <ElOption v-for="grade in classGrades" :key="grade.name" :label="t(grade.name)" :value="grade.name" />
+                <ElOption v-if="legacyGrade" :label="t('{0}（原值）', legacyGrade)" :value="legacyGrade" />
               </ElSelect>
               <ElSelect
                 v-else-if="field.key === 'term'"
                 v-model="form.term"
                 :disabled="saving"
-                :placeholder="field.placeholder || '请选择学期'"
+                :placeholder="t(field.placeholder || '请选择学期')"
                 @change="clearError(formErrors, 'term')"
               >
-                <ElOption v-for="term in terms" :key="term" :label="term" :value="term" />
+                <ElOption v-for="term in terms" :key="term" :label="t(term)" :value="term" />
                 <ElOption
                   v-if="originalRecord?.term && !terms.includes(originalRecord.term)"
-                  :label="`${termLabel(originalRecord.term)}（原值）`"
+                  :label="t('{0}（原值）', t(termLabel(originalRecord.term)))"
                   :value="originalRecord.term"
                 />
               </ElSelect>
@@ -1111,33 +1125,39 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
                 v-model="form[field.key]"
                 :filterable="['student_id', 'other_student_id'].includes(field.key)"
                 :disabled="saving || (section === 'rules' && field.key === 'kind' && ruleType !== 'legacy')"
-                :placeholder="field.placeholder || '请选择'"
+                :placeholder="t(field.placeholder || '请选择')"
                 @change="clearError(formErrors, field.key); if (field.key === 'student_id') clearError(formErrors, 'other_student_id')"
               >
                 <ElOption
                   v-for="option in choices(field)"
                   :key="String(option[0])"
-                  :label="option[1]"
+                  :label="referenceFields.includes(field.key) ? option[1] : t(option[1])"
                   :value="option[0]"
                   :disabled="option[2]"
                 />
                 <ElOption
                   v-if="originalRecord && field.key in originalRecord && !choices(field).some(option => option[0] === originalRecord[field.key])"
-                  :label="`${originalRecord[field.key] || '未填写'}（原值）`"
+                  :label="t('{0}（原值）', originalRecord[field.key] || t('未填写'))"
                   :value="originalRecord[field.key]"
                 />
               </ElSelect>
+              <ElInput
+                v-else-if="field.key === 'school_stage'"
+                :model-value="t(form[field.key])"
+                :placeholder="t(field.placeholder)"
+                :disabled="saving"
+                readonly
+              />
               <ElInput
                 v-else
                 v-model="form[field.key]"
                 :type="field.type === 'number' ? 'number' : 'text'"
                 :step="field.key === 'height' ? '0.1' : '1'"
-                :placeholder="field.placeholder || ''"
+                :placeholder="t(field.placeholder || '')"
                 :disabled="saving"
-                :readonly="field.key === 'school_stage'"
                 @input="clearError(formErrors, field.key)"
               />
-              <p v-if="formErrors[field.key]" class="form-error">{{ formErrors[field.key] }}</p>
+              <p v-if="formErrors[field.key]" class="form-error">{{ localizeMessage(formErrors[field.key]) }}</p>
             </div>
           </template>
         </div>
@@ -1157,14 +1177,14 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
           type="warning"
           show-icon
           :closable="false"
-          title="既有自定义／异常规则配置会原样保留；如参数不完整，请将其停用后新建规则。"
+          :title="t('既有自定义／异常规则配置会原样保留；如参数不完整，请将其停用后新建规则。')"
         />
       </div>
 
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="cancelDraft">取消</ElButton>
-          <ElButton type="primary" :loading="saving" @click="save">保存</ElButton>
+          <ElButton :disabled="saving" @click="cancelDraft">{{ t('取消') }}</ElButton>
+          <ElButton type="primary" :loading="saving" @click="save">{{ t('保存') }}</ElButton>
         </div>
       </template>
     </ElDrawer>
@@ -1172,33 +1192,33 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     <!-- 复制班级到新学期弹窗 -->
     <ElDialog
       :model-value="copying"
-      title="复制班级到新学期"
+      :title="t('复制班级到新学期')"
       width="min(92vw, 540px)"
       :before-close="done => { void cancelDraft().then(() => { if (!copying) done() }) }"
     >
       <div v-if="copyOptions" class="drawer-form">
-        <p class="required-legend"><span>*</span> 为必填项</p>
+        <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
         <div class="form-grid-2">
           <div class="form-field full-span" :class="{ 'is-error': !!copyErrors.name }">
-            <span class="form-label is-required">新班级名称</span>
+            <span class="form-label is-required">{{ t('新班级名称') }}</span>
             <ElInput
               v-model="copyOptions.name"
               :disabled="saving"
-              placeholder="请输入新班级名称，例如：高一（1）班"
+              :placeholder="t('请输入新班级名称，例如：高一（1）班')"
               @input="clearError(copyErrors, 'name')"
             />
-            <p v-if="copyErrors.name" class="form-error">{{ copyErrors.name }}</p>
+            <p v-if="copyErrors.name" class="form-error">{{ localizeMessage(copyErrors.name) }}</p>
           </div>
           <div class="form-field">
-            <span class="form-label">目标学年<span class="form-label-note">选填</span></span>
-            <ElInput v-model="copyOptions.school_year" :disabled="saving" placeholder="选填，例如：2026-2027" />
+            <span class="form-label">{{ t('目标学年') }}<span class="form-label-note">{{ t('选填') }}</span></span>
+            <ElInput v-model="copyOptions.school_year" :disabled="saving" :placeholder="t('选填，例如：2026-2027')" />
           </div>
           <div class="form-field" :class="{ 'is-error': !!copyErrors.term }">
-            <span class="form-label is-required">目标学期</span>
-            <ElSelect v-model="copyOptions.term" :disabled="saving" placeholder="请选择目标学期" @change="clearError(copyErrors, 'term')">
-              <ElOption v-for="term in terms" :key="term" :label="term" :value="term" />
+            <span class="form-label is-required">{{ t('目标学期') }}</span>
+            <ElSelect v-model="copyOptions.term" :disabled="saving" :placeholder="t('请选择目标学期')" @change="clearError(copyErrors, 'term')">
+              <ElOption v-for="term in terms" :key="term" :label="t(term)" :value="term" />
             </ElSelect>
-            <p v-if="copyErrors.term" class="form-error">{{ copyErrors.term }}</p>
+            <p v-if="copyErrors.term" class="form-error">{{ localizeMessage(copyErrors.term) }}</p>
           </div>
         </div>
         <div class="copy-checks">
@@ -1207,20 +1227,20 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             :disabled="saving"
             @change="copyOptions.relations = copyOptions.students && copyOptions.relations"
           >
-            复制在用学生
+            {{ t('复制在用学生') }}
           </ElCheckbox>
           <ElCheckbox v-model="copyOptions.relations" :disabled="saving || !copyOptions.students">
-            复制学生关系
+            {{ t('复制学生关系') }}
           </ElCheckbox>
-          <ElCheckbox v-model="copyOptions.rules" :disabled="saving">复制排座规则</ElCheckbox>
-          <ElCheckbox v-model="copyOptions.classrooms" :disabled="saving">复制默认教室及座位</ElCheckbox>
+          <ElCheckbox v-model="copyOptions.rules" :disabled="saving">{{ t('复制排座规则') }}</ElCheckbox>
+          <ElCheckbox v-model="copyOptions.classrooms" :disabled="saving">{{ t('复制默认教室及座位') }}</ElCheckbox>
         </div>
-        <p class="form-hint">仅复制在用资料；成绩和历史排座方案不会复制到新班级。</p>
+        <p class="form-hint">{{ t('仅复制在用资料；成绩和历史排座方案不会复制到新班级。') }}</p>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="cancelDraft">取消</ElButton>
-          <ElButton type="primary" :loading="saving" @click="copy">确认复制</ElButton>
+          <ElButton :disabled="saving" @click="cancelDraft">{{ t('取消') }}</ElButton>
+          <ElButton type="primary" :loading="saving" @click="copy">{{ t('确认复制') }}</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -1228,52 +1248,52 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     <!-- 导入学生弹窗 -->
     <ElDialog
       :model-value="studentImport"
-      title="导入学生名单（.xlsx）"
+      :title="t('导入学生名单（.xlsx）')"
       width="min(92vw, 600px)"
       :before-close="done => { studentImport = false; studentPreview = null; done() }"
     >
       <div class="drawer-form">
-        <p class="form-hint">请使用标准 Excel 模板填写学号、姓名及排座特征。勾选「按学号更新」时，留空的可选列会保留原值。</p>
+        <p class="form-hint">{{ t('请使用标准 Excel 模板填写学号、姓名及排座特征。勾选「按学号更新」时，留空的可选列会保留原值。') }}</p>
         <div class="action-group">
           <ElButton
             :icon="Download"
             :disabled="saving"
             @click="workbookAction(async () => downloadWorkbook(await invoke('student_template'), '学生导入模板.xlsx'))"
           >
-            下载学生模板
+            {{ t('下载学生模板') }}
           </ElButton>
           <input ref="studentFileInput" type="file" accept=".xlsx" class="hidden-file-input" @change="readStudentFile" />
           <ElButton type="primary" plain :icon="Upload" :loading="saving" @click="studentFileInput?.click()">
-            选择 Excel 文件并预检
+            {{ t('选择 Excel 文件并预检') }}
           </ElButton>
         </div>
         <ElCheckbox v-model="updateStudents" :disabled="saving" @change="studentPreview = null">
-          按学号更新该班已有学生资料
+          {{ t('按学号更新该班已有学生资料') }}
         </ElCheckbox>
         <template v-if="studentPreview">
           <div class="action-group">
-            <ElTag type="success" effect="light">待导入 {{ studentPreview.students.length }} 人</ElTag>
+            <ElTag type="success" effect="light">{{ t('待导入') }} {{ studentPreview.students.length }} {{ t('人') }}</ElTag>
             <ElTag :type="studentPreview.errors.length ? 'danger' : 'success'" effect="dark">
-              错误 {{ studentPreview.errors.length }} 项
+              {{ t('错误') }} {{ studentPreview.errors.length }} {{ t('项') }}
             </ElTag>
           </div>
-          <ElAlert v-if="studentPreview.errors.length" type="error" show-icon :closable="false" title="存在校验错误，请修改表格后重试">
+          <ElAlert v-if="studentPreview.errors.length" type="error" show-icon :closable="false" :title="t('存在校验错误，请修改表格后重试')">
             <ul class="error-list">
-              <li v-for="(error, index) in studentPreview.errors" :key="index">{{ error }}</li>
+              <li v-for="(error, index) in studentPreview.errors" :key="index">{{ localizeMessage(error) }}</li>
             </ul>
           </ElAlert>
         </template>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="studentImport = false; studentPreview = null">取消</ElButton>
+          <ElButton :disabled="saving" @click="studentImport = false; studentPreview = null">{{ t('取消') }}</ElButton>
           <ElButton
             type="primary"
             :loading="saving"
             :disabled="!studentPreview?.students.length || !!studentPreview.errors.length"
             @click="importStudents"
           >
-            确认导入
+            {{ t('确认导入') }}
           </ElButton>
         </div>
       </template>
@@ -1282,14 +1302,14 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     <!-- 教室座位明细抽屉（原「座位管理」收敛至此） -->
     <ElDrawer
       :model-value="!!positionsDrawerClassroom"
-      :title="positionsDrawerClassroom ? `${positionsDrawerClassroom.name} · 座位明细（高级）` : '座位明细'"
+      :title="positionsDrawerClassroom ? t('{0} · 座位明细（高级）', positionsDrawerClassroom.name) : t('座位明细')"
       size="min(94vw, 820px)"
       :before-close="done => { positionsDrawerClassroom = null; positionForm = null; done() }"
     >
       <div v-if="positionsDrawerClassroom" class="drawer-form">
         <div class="action-bar">
           <div class="action-group">
-            <ElButton type="primary" size="small" :icon="Plus" :disabled="saving" @click="editPositionRow()">新增单个位置</ElButton>
+            <ElButton type="primary" size="small" :icon="Plus" :disabled="saving" @click="editPositionRow()">{{ t('新增单个位置') }}</ElButton>
             <ElButton
               size="small"
               type="danger"
@@ -1297,91 +1317,91 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
               :disabled="saving || !positionSelection.some(item => item.active)"
               @click="deactivatePositions"
             >
-              批量停用 ({{ positionSelection.filter(item => item.active).length }})
+              {{ t('批量停用 (') }}{{ positionSelection.filter(item => item.active).length }})
             </ElButton>
           </div>
           <ElSelect v-model="positionsStatusFilter" size="small" style="width: 110px">
-            <ElOption label="全部状态" value="all" />
-            <ElOption label="正常" value="1" />
-            <ElOption label="停用" value="0" />
+            <ElOption :label="t('全部状态')" value="all" />
+            <ElOption :label="t('正常')" value="1" />
+            <ElOption :label="t('停用')" value="0" />
           </ElSelect>
         </div>
         <p class="form-hint">
-          日常绘制推荐使用「编辑与布局」中的可视化网格；此处用于核对单个坐标记录，或在缩小教室前批量停用超出范围的位置。
+          {{ t('日常绘制推荐使用「编辑与布局」中的可视化网格；此处用于核对单个坐标记录，或在缩小教室前批量停用超出范围的位置。') }}
         </p>
 
         <div v-if="positionForm" class="page-card" style="background: #f8fbfa">
-          <p class="required-legend" style="margin-bottom: 10px"><span>*</span> 为必填项</p>
+          <p class="required-legend" style="margin-bottom: 10px"><span>*</span> {{ t('为必填项') }}</p>
           <div class="form-grid-2">
             <div class="form-field" :class="{ 'is-error': !!positionErrors.row_number }">
-              <span class="form-label is-required">行号</span>
+              <span class="form-label is-required">{{ t('行号') }}</span>
               <ElInput
                 v-model.number="positionForm.row_number"
                 type="number"
                 :min="1"
-                :placeholder="`请输入 1 至 ${positionsDrawerClassroom.rows} 的整数`"
+                :placeholder="t('请输入 1 至 {0} 的整数', positionsDrawerClassroom.rows)"
                 :disabled="saving"
                 @input="clearError(positionErrors, 'row_number')"
               />
-              <p v-if="positionErrors.row_number" class="form-error">{{ positionErrors.row_number }}</p>
+              <p v-if="positionErrors.row_number" class="form-error">{{ localizeMessage(positionErrors.row_number) }}</p>
             </div>
             <div class="form-field" :class="{ 'is-error': !!positionErrors.column_number }">
-              <span class="form-label is-required">列号</span>
+              <span class="form-label is-required">{{ t('列号') }}</span>
               <ElInput
                 v-model.number="positionForm.column_number"
                 type="number"
                 :min="1"
-                :placeholder="`请输入 1 至 ${positionsDrawerClassroom.columns} 的整数`"
+                :placeholder="t('请输入 1 至 {0} 的整数', positionsDrawerClassroom.columns)"
                 :disabled="saving"
                 @input="clearError(positionErrors, 'column_number')"
               />
-              <p v-if="positionErrors.column_number" class="form-error">{{ positionErrors.column_number }}</p>
+              <p v-if="positionErrors.column_number" class="form-error">{{ localizeMessage(positionErrors.column_number) }}</p>
             </div>
             <div class="form-field" :class="{ 'is-error': !!positionErrors.kind }">
-              <span class="form-label is-required">类型</span>
-              <ElSelect v-model="positionForm.kind" :disabled="saving" placeholder="请选择位置类型" @change="clearError(positionErrors, 'kind')">
-                <ElOption label="座位" value="seat" />
-                <ElOption label="过道" value="aisle" />
-                <ElOption label="不可用" value="unavailable" />
+              <span class="form-label is-required">{{ t('类型') }}</span>
+              <ElSelect v-model="positionForm.kind" :disabled="saving" :placeholder="t('请选择位置类型')" @change="clearError(positionErrors, 'kind')">
+                <ElOption :label="t('座位')" value="seat" />
+                <ElOption :label="t('过道')" value="aisle" />
+                <ElOption :label="t('不可用')" value="unavailable" />
               </ElSelect>
-              <p v-if="positionErrors.kind" class="form-error">{{ positionErrors.kind }}</p>
+              <p v-if="positionErrors.kind" class="form-error">{{ localizeMessage(positionErrors.kind) }}</p>
             </div>
             <div class="form-field">
-              <span class="form-label">同桌分组<span class="form-label-note">选填</span></span>
-              <ElInput v-model="positionForm.desk_group" :disabled="saving" placeholder="选填，可留空" />
+              <span class="form-label">{{ t('同桌分组') }}<span class="form-label-note">{{ t('选填') }}</span></span>
+              <ElInput v-model="positionForm.desk_group" :disabled="saving" :placeholder="t('选填，可留空')" />
             </div>
             <div class="form-field">
-              <span class="form-label">状态</span>
+              <span class="form-label">{{ t('状态') }}</span>
               <ElSelect v-model="positionForm.active" :disabled="saving">
-                <ElOption label="正常" :value="1" />
-                <ElOption label="停用" :value="0" />
+                <ElOption :label="t('正常')" :value="1" />
+                <ElOption :label="t('停用')" :value="0" />
               </ElSelect>
             </div>
           </div>
           <div class="drawer-footer" style="margin-top: 12px">
-            <ElButton size="small" :disabled="saving" @click="positionForm = null">取消</ElButton>
-            <ElButton size="small" type="primary" :loading="saving" @click="savePositionRow">保存位置</ElButton>
+            <ElButton size="small" :disabled="saving" @click="positionForm = null">{{ t('取消') }}</ElButton>
+            <ElButton size="small" type="primary" :loading="saving" @click="savePositionRow">{{ t('保存位置') }}</ElButton>
           </div>
         </div>
 
         <ElTable :data="visiblePositions" border size="small" max-height="460" @selection-change="positionSelection = $event">
           <ElTableColumn type="selection" width="42" />
-          <ElTableColumn prop="row_number" label="行号" width="70" />
-          <ElTableColumn prop="column_number" label="列号" width="70" />
-          <ElTableColumn label="类型" width="90">
+          <ElTableColumn prop="row_number" :label="t('行号')" width="70" />
+          <ElTableColumn prop="column_number" :label="t('列号')" width="70" />
+          <ElTableColumn :label="t('类型')" width="90">
             <template #default="{ row }">
-              {{ { seat: '座位', aisle: '过道', unavailable: '不可用' }[row.kind] ?? row.kind }}
+              {{ { seat: t('座位'), aisle: t('过道'), unavailable: t('不可用') }[row.kind] ?? row.kind }}
             </template>
           </ElTableColumn>
-          <ElTableColumn prop="desk_group" label="同桌分组" min-width="110" />
-          <ElTableColumn label="状态" width="84">
+          <ElTableColumn prop="desk_group" :label="t('同桌分组')" min-width="110" />
+          <ElTableColumn :label="t('状态')" width="84">
             <template #default="{ row }">
-              <ElTag size="small" :type="row.active ? 'success' : 'info'">{{ row.active ? '正常' : '停用' }}</ElTag>
+              <ElTag size="small" :type="row.active ? 'success' : 'info'">{{ row.active ? t('正常') : t('停用') }}</ElTag>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="操作" width="80" fixed="right">
+          <ElTableColumn :label="t('操作')" width="80" fixed="right">
             <template #default="{ row }">
-              <ElButton link type="primary" size="small" :disabled="saving" @click="editPositionRow(row)">编辑</ElButton>
+              <ElButton link type="primary" size="small" :disabled="saving" @click="editPositionRow(row)">{{ t('编辑') }}</ElButton>
             </template>
           </ElTableColumn>
         </ElTable>

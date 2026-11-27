@@ -1,4 +1,5 @@
 <script setup>
+import { locale, localizeMessage, t } from './i18n.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -187,7 +188,7 @@ function applyProfiles(view) {
 }
 
 function providerLabel(code) {
-  return presets.find(item => item[0] === code)?.[1] ?? code
+  return t(presets.find(item => item[0] === code)?.[1] ?? code)
 }
 
 async function openProfile(item = null) {
@@ -262,14 +263,14 @@ function currentProfile() {
 
 function backup() {
   return run(async () => {
-    if (await invoke('export_backup')) notifySuccess('整库备份已保存')
+    if (await invoke('export_backup', { locale: locale.value })) notifySuccess('整库备份已保存')
   })
 }
 
 function inspect() {
   summary.value = null
   return run(async () => {
-    summary.value = await invoke('inspect_backup')
+    summary.value = await invoke('inspect_backup', { locale: locale.value })
     if (summary.value) notifyInfo('备份预检通过，请核对下方数据后确认是否覆盖恢复')
   })
 }
@@ -388,9 +389,9 @@ async function copyText(text, label) {
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
-    notifySuccess(`已复制${label}`)
+    notifySuccess(t('已复制{0}', t(label)))
   } catch {
-    notifyInfo(`${label}：${text}`)
+    notifyInfo(t('{0}：{1}', t(label), text))
   }
 }
 
@@ -421,6 +422,7 @@ async function downloadUpdate() {
     const savedPath = await invoke('download_update_asset', {
       url: updateResult.value.download_url,
       suggestedName: updateResult.value.asset_name ?? null,
+      locale: locale.value,
     })
     if (savedPath) {
       notifySuccess(`新版安装包已保存到：${savedPath}。请先关闭班伴，再运行安装包覆盖升级。`)
@@ -445,52 +447,52 @@ onMounted(() =>
         type="error"
         show-icon
         :closable="false"
-        title="检测到上次恢复中断或校验失败，当前业务访问已暂停"
+        :title="t('检测到上次恢复中断或校验失败，当前业务访问已暂停')"
         style="margin-bottom: 16px"
       >
         <template #default>
-          <p style="margin: 4px 0 10px">恢复前快照路径：{{ recovery.recovery_point || '未知' }}</p>
-          <ElButton type="warning" :loading="busy" @click="rollback">重试回退到恢复前数据</ElButton>
+          <p style="margin: 4px 0 10px">{{ t('恢复前快照路径：') }}{{ recovery.recovery_point || t('未知') }}</p>
+          <ElButton type="warning" :loading="busy" @click="rollback">{{ t('重试回退到恢复前数据') }}</ElButton>
         </template>
       </ElAlert>
 
       <section v-if="!recovery?.pending" class="page-card">
         <div class="section-head-row">
           <div>
-            <h2>当前本地数据库概览</h2>
-            <p class="form-hint">整库备份不包含 AI 凭据与运行日志，但含学生与成绩隐私信息，请妥善保管备份文件。</p>
+            <h2>{{ t('当前本地数据库概览') }}</h2>
+            <p class="form-hint">{{ t('整库备份不包含 AI 凭据与运行日志，但含学生与成绩隐私信息，请妥善保管备份文件。') }}</p>
           </div>
           <span v-if="recovery?.recovery_point && !recovery?.pending" class="form-hint">
-            最近恢复点已保留
+            {{ t('最近恢复点已保留') }}
           </span>
         </div>
         <div class="overview-grid">
-          <div class="stat-tile"><span>班级</span><strong>{{ overview.classes }}</strong></div>
-          <div class="stat-tile"><span>在用学生</span><strong>{{ overview.students }}</strong></div>
-          <div class="stat-tile"><span>考试批次</span><strong>{{ overview.exams }}</strong></div>
-          <div class="stat-tile"><span>排座方案</span><strong>{{ overview.plans }}</strong></div>
+          <div class="stat-tile"><span>{{ t('班级') }}</span><strong>{{ overview.classes }}</strong></div>
+          <div class="stat-tile"><span>{{ t('在用学生') }}</span><strong>{{ overview.students }}</strong></div>
+          <div class="stat-tile"><span>{{ t('考试批次') }}</span><strong>{{ overview.exams }}</strong></div>
+          <div class="stat-tile"><span>{{ t('排座方案') }}</span><strong>{{ overview.plans }}</strong></div>
         </div>
       </section>
 
       <div class="backup-split">
         <section class="page-card safe-card">
-          <h3>导出整库备份</h3>
-          <p class="form-hint">使用 SQLite 在线备份接口生成一致性 `.classmatehub-backup` 文件，不影响当前使用。</p>
+          <h3>{{ t('导出整库备份') }}</h3>
+          <p class="form-hint">{{ t('使用 SQLite 在线备份接口生成一致性 `.classmatehub-backup` 文件，不影响当前使用。') }}</p>
           <div class="card-cta">
             <ElButton type="primary" :icon="Download" :loading="busy" :disabled="recovery?.pending" @click="backup">
-              导出备份文件
+              {{ t('导出备份文件') }}
             </ElButton>
           </div>
         </section>
 
         <section class="page-card danger-card">
-          <h3>从备份覆盖恢复</h3>
+          <h3>{{ t('从备份覆盖恢复') }}</h3>
           <p class="form-hint">
-            <strong style="color: #c44545">高风险操作：</strong>确认恢复后会覆盖当前全部业务数据。恢复前会先只读预检并自动留存恢复前快照。
+            <strong style="color: #c44545">{{ t('高风险操作：') }}</strong>{{ t('确认恢复后会覆盖当前全部业务数据。恢复前会先只读预检并自动留存恢复前快照。') }}
           </p>
           <div class="card-cta">
             <ElButton type="danger" plain :icon="Upload" :loading="busy" :disabled="recovery?.pending" @click="inspect">
-              选择备份并预检
+              {{ t('选择备份并预检') }}
             </ElButton>
           </div>
         </section>
@@ -499,30 +501,32 @@ onMounted(() =>
       <section v-if="summary" class="page-card preview-card">
         <div class="section-head-row">
           <div>
-            <h2>备份预检通过</h2>
-            <p class="form-hint">{{ summary.source_name }} · 数据库结构版本 v{{ summary.version }}</p>
+            <h2>{{ t('备份预检通过') }}</h2>
+            <p class="form-hint">{{ summary.source_name }} {{ t('· 数据库结构版本 v') }}{{ summary.version }}</p>
           </div>
-          <ElTag type="danger" effect="light">覆盖前请核对记录数</ElTag>
+          <ElTag type="danger" effect="light">{{ t('覆盖前请核对记录数') }}</ElTag>
         </div>
         <ElAlert
           type="warning"
           show-icon
           :closable="false"
-          title="执行覆盖恢复将用备份内容完整替换下方当前库数据，操作前应用会自动创建恢复点。"
+          :title="t('执行覆盖恢复将用备份内容完整替换下方当前库数据，操作前应用会自动创建恢复点。')"
           style="margin: 12px 0 14px"
         />
         <ElTable :data="summaryRows" border size="small">
-          <ElTableColumn prop="label" label="数据类型" width="160" />
-          <ElTableColumn prop="current" label="当前库记录数" />
-          <ElTableColumn prop="incoming" label="备份文件记录数">
+          <ElTableColumn :label="t('数据类型')" width="160">
+            <template #default="{ row }">{{ t(row.label) }}</template>
+          </ElTableColumn>
+          <ElTableColumn prop="current" :label="t('当前库记录数')" />
+          <ElTableColumn prop="incoming" :label="t('备份文件记录数')">
             <template #default="{ row }">
               <strong>{{ row.incoming }}</strong>
             </template>
           </ElTableColumn>
         </ElTable>
         <div class="drawer-footer" style="margin-top: 16px">
-          <ElButton :disabled="busy" @click="discardPreview">取消</ElButton>
-          <ElButton type="danger" :loading="busy" @click="restore">确认覆盖恢复</ElButton>
+          <ElButton :disabled="busy" @click="discardPreview">{{ t('取消') }}</ElButton>
+          <ElButton type="danger" :loading="busy" @click="restore">{{ t('确认覆盖恢复') }}</ElButton>
         </div>
       </section>
     </template>
@@ -534,71 +538,71 @@ onMounted(() =>
             <span class="about-logo">班</span>
             <div>
               <div class="about-title-line">
-                <h2>{{ about?.product_title || '班伴 ClassmateHub' }}</h2>
+                <h2>{{ t(about?.product_title || '班伴 ClassmateHub') }}</h2>
                 <ElTag v-if="about?.version" type="success" effect="dark">v{{ about.version }}</ElTag>
-                <ElTag type="info" effect="plain">{{ about?.license || 'MIT' }} 许可证</ElTag>
+                <ElTag type="info" effect="plain">{{ about?.license || 'MIT' }} {{ t('许可证') }}</ElTag>
               </div>
               <p class="form-hint">
-                面向一线教师的本地桌面排座与成绩管理应用。核心流程离线运行，数据保存在本机 SQLite 数据库中。
+                {{ t('面向一线教师的本地桌面排座与成绩管理应用。核心流程离线运行，数据保存在本机 SQLite 数据库中。') }}
               </p>
             </div>
           </div>
           <div class="action-group">
             <ElButton type="primary" :icon="Refresh" :loading="busy" @click="checkUpdate">
-              检查更新
+              {{ t('检查更新') }}
             </ElButton>
             <ElButton
               :icon="CopyDocument"
               :disabled="!about?.releases_url"
               @click="copyText(about?.releases_url, 'GitHub 发布页地址')"
             >
-              复制发布页地址
+              {{ t('复制发布页地址') }}
             </ElButton>
           </div>
         </div>
 
         <div class="about-meta-grid">
           <div class="meta-item">
-            <span class="meta-label">运行平台与架构</span>
-            <strong>{{ about ? `${about.os} (${about.arch})` : '读取中…' }}</strong>
+            <span class="meta-label">{{ t('运行平台与架构') }}</span>
+            <strong>{{ about ? `${about.os} (${about.arch})` : t('读取中…') }}</strong>
           </div>
           <div class="meta-item">
-            <span class="meta-label">应用标识</span>
+            <span class="meta-label">{{ t('应用标识') }}</span>
             <code>{{ about?.identifier || 'com.classmatehub.desktop' }}</code>
           </div>
           <div class="meta-item">
-            <span class="meta-label">数据库结构版本</span>
+            <span class="meta-label">{{ t('数据库结构版本') }}</span>
             <strong>SQLite v{{ about?.sqlite_schema_version ?? 5 }}</strong>
           </div>
           <div class="meta-item">
-            <span class="meta-label">智能排座引擎</span>
-            <strong>引擎 v{{ about?.engine_version ?? 1 }}</strong>
+            <span class="meta-label">{{ t('智能排座引擎') }}</span>
+            <strong>{{ t('引擎 v') }}{{ about?.engine_version ?? 1 }}</strong>
           </div>
           <div class="meta-item full-span">
-            <span class="meta-label">本地数据存储目录（升级与默认卸载均保留此目录数据）</span>
+            <span class="meta-label">{{ t('本地数据存储目录（升级与默认卸载均保留此目录数据）') }}</span>
             <div class="path-copy-row">
-              <code>{{ about?.data_directory || '读取中…' }}</code>
+              <code>{{ about?.data_directory || t('读取中…') }}</code>
               <ElButton
                 size="small"
                 :icon="CopyDocument"
                 :disabled="!about?.data_directory"
                 @click="copyText(about.data_directory, '本地数据目录路径')"
               >
-                复制路径
+                {{ t('复制路径') }}
               </ElButton>
             </div>
           </div>
           <div class="meta-item full-span">
-            <span class="meta-label">安装包发布仓库（GitHub）</span>
+            <span class="meta-label">{{ t('安装包发布仓库（GitHub）') }}</span>
             <div class="path-copy-row">
-              <code>{{ about?.repository_url || '读取中…' }}</code>
+              <code>{{ about?.repository_url || t('读取中…') }}</code>
               <ElButton
                 size="small"
                 :icon="CopyDocument"
                 :disabled="!about?.repository_url"
                 @click="copyText(about.repository_url, '发布仓库地址')"
               >
-                复制仓库地址
+                {{ t('复制仓库地址') }}
               </ElButton>
             </div>
           </div>
@@ -608,12 +612,12 @@ onMounted(() =>
       <section class="page-card" style="margin-top: 16px">
         <div class="section-head-row">
           <div>
-            <h2>在线更新检查（直连 GitHub Releases）</h2>
+            <h2>{{ t('在线更新检查（直连 GitHub Releases）') }}</h2>
             <p class="form-hint">
-              仅在主动点击「检查更新」时向 GitHub Releases 发起只读查询（兼容 <code>latest.json</code> 清单与 Releases 接口），无需单独部署更新服务器，也不发送任何学生或班级资料。
+              {{ t('仅在主动点击「检查更新」时向 GitHub Releases 发起只读查询（兼容') }} <code>latest.json</code> {{ t('清单与 Releases 接口），无需单独部署更新服务器，也不发送任何学生或班级资料。') }}
             </p>
           </div>
-          <span v-if="lastCheckedTime" class="form-hint">最近检查：{{ lastCheckedTime }}</span>
+          <span v-if="lastCheckedTime" class="form-hint">{{ t('最近检查：') }}{{ lastCheckedTime }}</span>
         </div>
 
         <div v-if="updateResult" class="update-result-card" :class="updateResult.status">
@@ -625,14 +629,14 @@ onMounted(() =>
               >
                 {{
                   updateResult.has_update
-                    ? `发现新版本 v${updateResult.latest_version}`
+                    ? t('发现新版本 v{0}', updateResult.latest_version)
                     : updateResult.status === 'up_to_date'
-                      ? '已是最新版本'
-                      : '暂未发布公开版本'
+                      ? t('已是最新版本')
+                      : t('暂未发布公开版本')
                 }}
               </ElTag>
-              <strong>{{ updateResult.release_title || updateResult.message }}</strong>
-              <span v-if="updateResult.published_at" class="form-hint">发布时间：{{ updateResult.published_at }}</span>
+              <strong>{{ localizeMessage(updateResult.release_title || updateResult.message) }}</strong>
+              <span v-if="updateResult.published_at" class="form-hint">{{ t('发布时间：') }}{{ updateResult.published_at }}</span>
             </div>
             <div class="action-group">
               <ElButton
@@ -643,7 +647,7 @@ onMounted(() =>
                 :loading="busy"
                 @click="downloadUpdate"
               >
-                下载新版安装包{{ updateResult.asset_size ? ` (${formatByteSize(updateResult.asset_size)})` : '' }}
+                {{ t('下载新版安装包') }}{{ updateResult.asset_size ? ` (${formatByteSize(updateResult.asset_size)})` : '' }}
               </ElButton>
               <ElButton
                 v-if="updateResult.download_url"
@@ -651,22 +655,22 @@ onMounted(() =>
                 :icon="CopyDocument"
                 @click="copyText(updateResult.download_url, '安装包下载链接')"
               >
-                复制安装包链接
+                {{ t('复制安装包链接') }}
               </ElButton>
               <ElButton
                 size="small"
                 :icon="CopyDocument"
                 @click="copyText(updateResult.release_page_url, '版本发布页地址')"
               >
-                复制发布页链接
+                {{ t('复制发布页链接') }}
               </ElButton>
             </div>
           </div>
 
-          <p class="update-message">{{ updateResult.message }}</p>
+          <p class="update-message">{{ localizeMessage(updateResult.message) }}</p>
 
           <div v-if="updateResult.notes" class="release-notes-box">
-            <span class="form-label">更新说明</span>
+            <span class="form-label">{{ t('更新说明') }}</span>
             <pre>{{ updateResult.notes }}</pre>
           </div>
 
@@ -675,17 +679,17 @@ onMounted(() =>
             type="info"
             show-icon
             :closable="false"
-            title="覆盖升级提示：下载新版安装包后，请先关闭正在运行的班伴，再运行新版安装程序；向导会默认选中「覆盖升级（保留本地数据）」。"
+            :title="t('覆盖升级提示：下载新版安装包后，请先关闭正在运行的班伴，再运行新版安装程序；向导会默认选中「覆盖升级（保留本地数据）」。')"
             style="margin-top: 10px"
           />
         </div>
 
         <ElCollapse v-model="updateAdvancedOpen" style="margin-top: 14px">
-          <ElCollapseItem title="高级选项：自定义更新清单地址／镜像源（选填）" name="endpoint">
+          <ElCollapseItem :title="t('高级选项：自定义更新清单地址／镜像源（选填）')" name="endpoint">
             <div class="form-field">
               <span class="form-label">
-                自定义更新地址
-                <span class="form-label-note">留空则默认直连 GitHub Releases</span>
+                {{ t('自定义更新地址') }}
+                <span class="form-label-note">{{ t('留空则默认直连 GitHub Releases') }}</span>
               </span>
               <div class="model-row">
                 <ElInput
@@ -694,10 +698,10 @@ onMounted(() =>
                   :disabled="busy"
                   :placeholder="about?.default_manifest_url"
                 />
-                <ElButton :loading="busy" @click="checkUpdate">用此地址检查</ElButton>
+                <ElButton :loading="busy" @click="checkUpdate">{{ t('用此地址检查') }}</ElButton>
               </div>
               <p class="form-hint">
-                如校园网直连 GitHub 较慢，可在此填写加速镜像的 HTTPS <code>latest.json</code> 地址。
+                {{ t('如校园网直连 GitHub 较慢，可在此填写加速镜像的 HTTPS') }} <code>latest.json</code> {{ t('地址。') }}
               </p>
             </div>
           </ElCollapseItem>
@@ -708,80 +712,80 @@ onMounted(() =>
     <template v-else>
       <div class="action-bar">
         <div class="action-group">
-          <ElButton type="primary" :icon="Plus" :disabled="busy" @click="openProfile()">新增模型配置</ElButton>
+          <ElButton type="primary" :icon="Plus" :disabled="busy" @click="openProfile()">{{ t('新增模型配置') }}</ElButton>
         </div>
-        <span class="form-hint">AI 排座仅在老师逐次确认后发送一次性临时编号、座位布局与必要硬约束。</span>
+        <span class="form-hint">{{ t('AI 排座仅在老师逐次确认后发送一次性临时编号、座位布局与必要硬约束。') }}</span>
       </div>
 
       <div class="filter-bar">
         <ElInput
           v-model="profileSearch"
           clearable
-          placeholder="搜索配置名称"
+          :placeholder="t('搜索配置名称')"
           :prefix-icon="Search"
           style="width: 220px"
         />
         <div class="filter-item">
-          <span>供应商</span>
-          <ElSelect v-model="providerFilter" clearable placeholder="全部供应商" style="width: 200px">
-            <ElOption v-for="[id, label] in presets" :key="id" :label="label" :value="id" />
+          <span>{{ t('供应商') }}</span>
+          <ElSelect v-model="providerFilter" clearable :placeholder="t('全部供应商')" style="width: 200px">
+            <ElOption v-for="[id, label] in presets" :key="id" :label="t(label)" :value="id" />
           </ElSelect>
         </div>
         <div class="filter-item">
-          <span>状态</span>
-          <ElSelect v-model="profileStatus" clearable placeholder="全部" style="width: 110px">
-            <ElOption label="正常" value="true" />
-            <ElOption label="停用" value="false" />
+          <span>{{ t('状态') }}</span>
+          <ElSelect v-model="profileStatus" clearable :placeholder="t('全部')" style="width: 110px">
+            <ElOption :label="t('正常')" value="true" />
+            <ElOption :label="t('停用')" value="false" />
           </ElSelect>
         </div>
-        <ElButton :icon="Refresh" @click="resetAiFilters">重置</ElButton>
+        <ElButton :icon="Refresh" @click="resetAiFilters">{{ t('重置') }}</ElButton>
       </div>
 
       <div class="table-card">
-        <ElTable :data="filteredProfiles" empty-text="暂无模型配置，点击上方「新增模型配置」添加">
-          <ElTableColumn label="配置名称" min-width="180">
+        <ElTable :data="filteredProfiles" :empty-text="t('暂无模型配置，点击上方「新增模型配置」添加')">
+          <ElTableColumn :label="t('配置名称')" min-width="180">
             <template #default="{ row }">
               <div class="name-cell">
                 <strong>{{ row.profile.name }}</strong>
-                <ElTag v-if="row.profile.id === defaultProfileId" size="small" type="success" effect="dark">默认</ElTag>
+                <ElTag v-if="row.profile.id === defaultProfileId" size="small" type="success" effect="dark">{{ t('默认') }}</ElTag>
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="供应商" min-width="170">
+          <ElTableColumn :label="t('供应商')" min-width="170">
             <template #default="{ row }">{{ providerLabel(row.profile.provider) }}</template>
           </ElTableColumn>
-          <ElTableColumn label="模型" min-width="180">
+          <ElTableColumn :label="t('模型')" min-width="180">
             <template #default="{ row }">
               <code>{{ row.profile.settings.model }}</code>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="凭据" width="110">
+          <ElTableColumn :label="t('凭据')" width="110">
             <template #default="{ row }">
               <ElTag size="small" :type="row.has_key ? 'success' : 'info'" effect="plain">
-                {{ row.has_key ? '已存凭据' : '无密钥' }}
+                {{ row.has_key ? t('已存凭据') : t('无密钥') }}
               </ElTag>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="状态" width="90">
+          <ElTableColumn :label="t('状态')" width="90">
             <template #default="{ row }">
               <ElTag size="small" :type="row.profile.active ? 'success' : 'info'" effect="light">
-                {{ row.profile.active ? '正常' : '停用' }}
+                {{ row.profile.active ? t('正常') : t('停用') }}
               </ElTag>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="操作" width="260" fixed="right">
+          <ElTableColumn :label="t('操作')" width="260" fixed="right">
             <template #default="{ row }">
-              <ElButton link type="primary" :disabled="busy || !!editor" @click="testConnection(row)">测试连接</ElButton>
+              <ElButton link type="primary" :disabled="busy || !!editor" @click="testConnection(row)">{{ t('测试连接') }}</ElButton>
               <ElButton
                 link
                 type="primary"
                 :disabled="busy || !!editor || !row.profile.active || row.profile.id === defaultProfileId"
                 @click="changeProfile(row, false)"
               >
-                设为默认
+                {{ t('设为默认') }}
               </ElButton>
-              <ElButton link type="primary" :disabled="busy" @click="openProfile(row)">编辑</ElButton>
-              <ElButton link type="danger" :disabled="busy || !!editor" @click="changeProfile(row, true)">删除</ElButton>
+              <ElButton link type="primary" :disabled="busy" @click="openProfile(row)">{{ t('编辑') }}</ElButton>
+              <ElButton link type="danger" :disabled="busy || !!editor" @click="changeProfile(row, true)">{{ t('删除') }}</ElButton>
             </template>
           </ElTableColumn>
         </ElTable>
@@ -789,53 +793,53 @@ onMounted(() =>
 
       <ElDrawer
         :model-value="!!editor"
-        :title="editor?.id ? '编辑 AI 模型配置' : '新增 AI 模型配置'"
+        :title="editor?.id ? t('编辑 AI 模型配置') : t('新增 AI 模型配置')"
         size="min(92vw, 560px)"
         :before-close="handleDrawerClose"
         destroy-on-close
       >
         <div v-if="editor" class="drawer-form">
-          <p class="required-legend"><span>*</span> 为必填项</p>
+          <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
           <div class="form-field">
-            <span class="form-label">AI 供应商预设</span>
+            <span class="form-label">{{ t('AI 供应商预设') }}</span>
             <ElSelect v-model="editor.provider" :disabled="busy" @change="applyPreset">
-              <ElOption v-for="[id, label] in presets" :key="id" :label="label" :value="id" />
+              <ElOption v-for="[id, label] in presets" :key="id" :label="t(label)" :value="id" />
             </ElSelect>
           </div>
           <div class="form-field" :class="{ 'is-error': !!profileErrors.name }">
-            <span class="form-label is-required">配置名称</span>
+            <span class="form-label is-required">{{ t('配置名称') }}</span>
             <ElInput
               v-model="editor.name"
               :disabled="busy"
-              placeholder="请输入配置名称，例如：深度求索排座主力"
+              :placeholder="t('请输入配置名称，例如：深度求索排座主力')"
               @input="clearProfileError('name')"
             />
-            <p v-if="profileErrors.name" class="form-error">{{ profileErrors.name }}</p>
+            <p v-if="profileErrors.name" class="form-error">{{ localizeMessage(profileErrors.name) }}</p>
           </div>
           <div class="form-field" :class="{ 'is-error': !!profileErrors.endpoint }">
-            <span class="form-label is-required">对话接口地址</span>
+            <span class="form-label is-required">{{ t('对话接口地址') }}</span>
             <ElInput
               v-model="editor.settings.endpoint"
               :disabled="busy"
-              placeholder="请输入完整地址，例如：https://服务地址/v1/chat/completions"
+              :placeholder="t('请输入完整地址，例如：https://服务地址/v1/chat/completions')"
               @input="modelOptions = []; clearProfileError('endpoint')"
             />
-            <p v-if="profileErrors.endpoint" class="form-error">{{ profileErrors.endpoint }}</p>
+            <p v-if="profileErrors.endpoint" class="form-error">{{ localizeMessage(profileErrors.endpoint) }}</p>
           </div>
           <div class="form-field">
-            <span class="form-label">接口密钥<span class="form-label-note">选填，视服务商要求</span></span>
+            <span class="form-label">{{ t('接口密钥') }}<span class="form-label-note">{{ t('选填，视服务商要求') }}</span></span>
             <ElInput
               v-model="key"
               type="password"
               show-password
               autocomplete="off"
               :disabled="busy || forgetKey"
-              :placeholder="hasKey ? '已保存系统凭据（留空沿用原密钥）' : '选填，服务要求鉴权时填写'"
+              :placeholder="hasKey ? t('已保存系统凭据（留空沿用原密钥）') : t('选填，服务要求鉴权时填写')"
             />
-            <ElCheckbox v-if="hasKey" v-model="forgetKey" :disabled="busy">移除此配置已保存的密钥</ElCheckbox>
+            <ElCheckbox v-if="hasKey" v-model="forgetKey" :disabled="busy">{{ t('移除此配置已保存的密钥') }}</ElCheckbox>
           </div>
           <div class="form-field" :class="{ 'is-error': !!profileErrors.model }">
-            <span class="form-label is-required">模型名称</span>
+            <span class="form-label is-required">{{ t('模型名称') }}</span>
             <div class="model-row">
               <ElSelect
                 v-model="editor.settings.model"
@@ -843,44 +847,44 @@ onMounted(() =>
                 allow-create
                 default-first-option
                 :disabled="busy"
-                placeholder="请输入或获取模型名称"
+                :placeholder="t('请输入或获取模型名称')"
                 style="flex: 1"
                 @change="clearProfileError('model')"
               >
                 <ElOption v-for="model in modelOptions" :key="model" :label="model" :value="model" />
               </ElSelect>
-              <ElButton :loading="busy" :disabled="!editor.settings.endpoint" @click="fetchModels">获取模型</ElButton>
+              <ElButton :loading="busy" :disabled="!editor.settings.endpoint" @click="fetchModels">{{ t('获取模型') }}</ElButton>
             </div>
-            <p v-if="profileErrors.model" class="form-error">{{ profileErrors.model }}</p>
-            <p v-else-if="modelOptions.length" class="form-hint">已加载 {{ modelOptions.length }} 个可选模型，可直接搜索选择或手动输入。</p>
+            <p v-if="profileErrors.model" class="form-error">{{ localizeMessage(profileErrors.model) }}</p>
+            <p v-else-if="modelOptions.length" class="form-hint">{{ t('已加载') }} {{ modelOptions.length }} {{ t('个可选模型，可直接搜索选择或手动输入。') }}</p>
           </div>
           <div class="switch-row">
             <div class="switch-item">
-              <span class="form-label">启用状态</span>
-              <ElSwitch v-model="editor.active" :disabled="busy" active-text="正常" inactive-text="停用" />
+              <span class="form-label">{{ t('启用状态') }}</span>
+              <ElSwitch v-model="editor.active" :disabled="busy" :active-text="t('正常')" :inactive-text="t('停用')" />
             </div>
-            <ElCheckbox v-model="makeDefault" :disabled="busy || !editor.active">设为排座默认模型</ElCheckbox>
+            <ElCheckbox v-model="makeDefault" :disabled="busy || !editor.active">{{ t('设为排座默认模型') }}</ElCheckbox>
           </div>
 
           <ElCollapse v-model="advancedOpen">
-            <ElCollapseItem title="高级参数（超时、采样温度、最大输出长度、思考程度、备注）" name="advanced">
+            <ElCollapseItem :title="t('高级参数（超时、采样温度、最大输出长度、思考程度、备注）')" name="advanced">
               <div class="form-grid-2">
                 <div class="form-field" :class="{ 'is-error': !!profileErrors.timeout_seconds }">
-                  <span class="form-label is-required">超时秒数</span>
+                  <span class="form-label is-required">{{ t('超时秒数') }}</span>
                   <ElInputNumber
                     v-model="editor.settings.timeout_seconds"
                     :min="1"
                     :max="120"
                     :disabled="busy"
                     controls-position="right"
-                    placeholder="1 至 120 的整数"
+                    :placeholder="t('1 至 120 的整数')"
                     style="width: 100%"
                     @change="clearProfileError('timeout_seconds')"
                   />
-                  <p v-if="profileErrors.timeout_seconds" class="form-error">{{ profileErrors.timeout_seconds }}</p>
+                  <p v-if="profileErrors.timeout_seconds" class="form-error">{{ localizeMessage(profileErrors.timeout_seconds) }}</p>
                 </div>
                 <div class="form-field">
-                  <span class="form-label">采样温度</span>
+                  <span class="form-label">{{ t('采样温度') }}</span>
                   <ElInputNumber
                     v-model="editor.settings.temperature"
                     :min="0"
@@ -889,35 +893,35 @@ onMounted(() =>
                     :precision="1"
                     :disabled="busy"
                     controls-position="right"
-                    placeholder="选填，跟随默认"
+                    :placeholder="t('选填，跟随默认')"
                     style="width: 100%"
                   />
                 </div>
                 <div class="form-field">
-                  <span class="form-label">最大输出长度</span>
+                  <span class="form-label">{{ t('最大输出长度') }}</span>
                   <ElInputNumber
                     v-model="editor.settings.max_tokens"
                     :min="1"
                     :max="131072"
                     :disabled="busy"
                     controls-position="right"
-                    placeholder="选填，跟随默认"
+                    :placeholder="t('选填，跟随默认')"
                     style="width: 100%"
                   />
                 </div>
                 <div class="form-field">
-                  <span class="form-label">思考程度</span>
+                  <span class="form-label">{{ t('思考程度') }}</span>
                   <ElSelect v-model="editor.settings.reasoning_effort" :disabled="busy">
-                    <ElOption label="跟随模型默认" :value="null" />
-                    <ElOption label="关闭思考" value="off" />
-                    <ElOption label="轻量思考" value="low" />
-                    <ElOption label="适中思考" value="medium" />
-                    <ElOption label="深度思考" value="high" />
+                    <ElOption :label="t('跟随模型默认')" :value="null" />
+                    <ElOption :label="t('关闭思考')" value="off" />
+                    <ElOption :label="t('轻量思考')" value="low" />
+                    <ElOption :label="t('适中思考')" value="medium" />
+                    <ElOption :label="t('深度思考')" value="high" />
                   </ElSelect>
                 </div>
                 <div class="form-field full-span">
-                  <span class="form-label">备注</span>
-                  <ElInput v-model="editor.remark" :disabled="busy" placeholder="选填说明" />
+                  <span class="form-label">{{ t('备注') }}</span>
+                  <ElInput v-model="editor.remark" :disabled="busy" :placeholder="t('选填说明')" />
                 </div>
               </div>
             </ElCollapseItem>
@@ -931,11 +935,11 @@ onMounted(() =>
               :disabled="!editor?.settings?.endpoint || !editor?.settings?.model"
               @click="testConnection()"
             >
-              测试连接
+              {{ t('测试连接') }}
             </ElButton>
             <div class="drawer-footer">
-              <ElButton :disabled="busy" @click="cancelEditor">取消</ElButton>
-              <ElButton type="primary" :loading="busy" @click="saveSettings">保存配置</ElButton>
+              <ElButton :disabled="busy" @click="cancelEditor">{{ t('取消') }}</ElButton>
+              <ElButton type="primary" :loading="busy" @click="saveSettings">{{ t('保存配置') }}</ElButton>
             </div>
           </div>
         </template>

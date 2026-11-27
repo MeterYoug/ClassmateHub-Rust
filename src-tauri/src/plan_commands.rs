@@ -117,10 +117,11 @@ pub async fn export_plan_workbook<R: tauri::Runtime>(
     database: State<'_, Database>,
     id: i64,
     teacher: bool,
+    locale: Option<String>,
 ) -> Result<bool, String> {
     let sheet = plan_export_sheet(database, id, teacher)?;
     tauri::async_runtime::spawn_blocking(move || {
-        plan_export::save_file(window, plan_export::workbook(&sheet)?, "xlsx")
+        plan_export::save_file(window, plan_export::workbook(&sheet)?, "xlsx", locale.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -144,8 +145,12 @@ pub async fn export_plan_image<R: tauri::Runtime>(
     if bytes.len() > 100 * 1024 * 1024 {
         return Err("导出文件超过 100 MB".into());
     }
+    let locale = request.headers()
+        .get("x-classmatehub-locale")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || plan_export::save_file(window, bytes, extension))
+    tauri::async_runtime::spawn_blocking(move || plan_export::save_file(window, bytes, extension, locale.as_deref()))
         .await
         .map_err(|e| e.to_string())?
 }

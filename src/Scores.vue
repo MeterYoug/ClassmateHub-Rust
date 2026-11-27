@@ -1,4 +1,5 @@
 <script setup>
+import { locale, localizeMessage, t } from './i18n.js'
 import { computed, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -19,8 +20,8 @@ import {
   ElTag,
 } from 'element-plus'
 import { Check, Download, Edit, Plus, Search, Upload } from '@element-plus/icons-vue'
-import { classGrades, classSubjects, subjectsForClass } from './classOptions.js'
-import { downloadWorkbook, workbookBytes } from './workbook.js'
+import { classGrades, classSubjects, subjectLabel, subjectsForClass } from './classOptions.js'
+import { workbookBytes } from './workbook.js'
 import { confirmAction, notifyError, notifyInfo, notifySuccess, notifyWarning } from './ui.js'
 
 const props = defineProps({
@@ -213,6 +214,11 @@ function initialSubjectValue(row, subjectId) {
   if (!detail) return ''
   if (detail.status === 'absent') return '缺考'
   return detail.score == null ? '' : money(detail.score)
+}
+
+function updateScoreInput(subjectId, value) {
+  const absentLabel = t('缺考')
+  scoreDraft.value.values[subjectId] = value.trim().toLowerCase() === absentLabel.toLowerCase() ? '缺考' : value
 }
 
 async function run(action) {
@@ -466,12 +472,18 @@ async function saveTemplate() {
 async function download(exportScores = false) {
   if (!examId.value) return
   await run(async () => {
-    const data = await invoke(exportScores ? 'export_scores' : 'score_template', {
-      examId: Number(examId.value),
-      byStudentNo: exportByStudentNo.value,
-    })
-    downloadWorkbook(data, exportScores ? '考试成绩.xlsx' : '成绩导入模板.xlsx')
-    notifySuccess(exportScores ? '成绩表已导出' : '成绩导入模板已下载')
+    const id = Number(examId.value)
+    const saved = exportScores
+      ? await invoke('export_scores', {
+          examId: id,
+          byStudentNo: exportByStudentNo.value,
+          locale: locale.value,
+        })
+      : await invoke('score_template', {
+          examId: id,
+          locale: locale.value,
+        })
+    if (saved) notifySuccess(exportScores ? '成绩表已导出' : '成绩导入模板已下载')
   })
 }
 
@@ -567,58 +579,58 @@ onMounted(() =>
 <template>
   <div class="page-container">
     <div v-if="!classId" class="page-card">
-      <ElEmpty description="请先创建或选择一个班级后再管理考试与成绩" />
+      <ElEmpty :description="t('请先创建或选择一个班级后再管理考试与成绩')" />
     </div>
 
     <template v-else>
       <section class="exam-bar page-card">
         <div class="exam-bar-left">
-          <span class="form-label">当前考试</span>
+          <span class="form-label">{{ t('当前考试') }}</span>
           <ElSelect
             :model-value="examId"
             :disabled="saving || !exams.length"
-            placeholder="暂无考试，请先新建"
+            :placeholder="t('暂无考试，请先新建')"
             style="width: 260px"
             @change="changeExam"
           >
             <ElOption
               v-for="exam in exams"
               :key="exam.id"
-              :label="`${exam.name}${exam.is_current ? '（当前）' : ''}`"
+              :label="`${exam.name}${exam.is_current ? t('（当前）') : ''}`"
               :value="exam.id"
             />
           </ElSelect>
           <ElTag v-if="activeExam" size="small" :type="activeExam.rank_grading ? 'success' : 'info'" effect="light">
-            {{ activeExam.rank_grading ? '四档排名分级' : '得分率分级' }}
+            {{ activeExam.rank_grading ? t('四档排名分级') : t('得分率分级') }}
           </ElTag>
           <span v-if="activeExam?.exam_date" class="form-hint">{{ activeExam.exam_date }}</span>
         </div>
 
         <div class="action-group">
-          <ElButton type="primary" :icon="Plus" :disabled="saving" @click="newExam">新建考试</ElButton>
-          <ElButton :icon="Edit" :disabled="saving || !activeExam" @click="editExam">编辑考试</ElButton>
-          <ElButton :disabled="saving || !activeExam || activeExam.is_current" @click="setCurrent">设为当前</ElButton>
+          <ElButton type="primary" :icon="Plus" :disabled="saving" @click="newExam">{{ t('新建考试') }}</ElButton>
+          <ElButton :icon="Edit" :disabled="saving || !activeExam" @click="editExam">{{ t('编辑考试') }}</ElButton>
+          <ElButton :disabled="saving || !activeExam || activeExam.is_current" @click="setCurrent">{{ t('设为当前') }}</ElButton>
           <ElButton type="success" plain :icon="Check" :disabled="saving || !activeExam" @click="syncLevels">
-            同步等级到学生档案
+            {{ t('同步等级到学生档案') }}
           </ElButton>
         </div>
       </section>
 
       <div class="page-card tabs-shell">
         <ElTabs v-model="activeTab">
-          <ElTabPane :label="`逐生成绩 (${scoredCount}/${rows.length})`" name="scores">
+          <ElTabPane :label="t('逐生成绩 ({0}/{1})', scoredCount, rows.length)" name="scores">
             <template v-if="activeExam">
               <div class="filter-bar">
                 <ElInput
                   v-model="scoreSearch"
                   clearable
-                  placeholder="搜索学号或姓名"
+                  :placeholder="t('搜索学号或姓名')"
                   :prefix-icon="Search"
                   style="width: 220px"
                 />
                 <div class="filter-item">
-                  <span>成绩等级</span>
-                  <ElSelect v-model="levelFilter" clearable placeholder="全部" style="width: 110px">
+                  <span>{{ t('成绩等级') }}</span>
+                  <ElSelect v-model="levelFilter" clearable :placeholder="t('全部')" style="width: 110px">
                     <ElOption label="A" value="A" />
                     <ElOption label="B" value="B" />
                     <ElOption label="C" value="C" />
@@ -627,48 +639,48 @@ onMounted(() =>
                   </ElSelect>
                 </div>
                 <span class="form-hint" style="margin-left: auto">
-                  已录入 {{ scoredCount }} / {{ rows.length }} 人
+                  {{ t('已录入') }} {{ scoredCount }} / {{ rows.length }} {{ t('人') }}
                 </span>
               </div>
 
-              <ElTable :data="filteredRows" border stripe empty-text="当前筛选条件下暂无学生记录">
-                <ElTableColumn prop="student_no" label="学号" width="110" fixed="left" />
-                <ElTableColumn label="姓名" width="110" fixed="left">
+              <ElTable :data="filteredRows" border stripe :empty-text="t('当前筛选条件下暂无学生记录')">
+                <ElTableColumn prop="student_no" :label="t('学号')" width="110" fixed="left" />
+                <ElTableColumn :label="t('姓名')" width="110" fixed="left">
                   <template #default="{ row }">
                     <span>{{ row.name }}</span>
-                    <ElTag v-if="!row.active" size="small" type="info" style="margin-left: 4px">停用</ElTag>
+                    <ElTag v-if="!row.active" size="small" type="info" style="margin-left: 4px">{{ t('停用') }}</ElTag>
                   </template>
                 </ElTableColumn>
 
                 <ElTableColumn
                   v-for="subject in activeExam.subjects"
                   :key="subject.id"
-                  :label="`${subject.name} (${money(subject.full_score)})`"
+                  :label="`${subjectLabel(subject.name)} (${money(subject.full_score)})`"
                   min-width="116"
                 >
                   <template #default="{ row }">
                     <template v-if="detailFor(row, subject.id)">
-                      <ElTag v-if="detailFor(row, subject.id).status === 'absent'" type="warning" size="small">缺考</ElTag>
+                      <ElTag v-if="detailFor(row, subject.id).status === 'absent'" type="warning" size="small">{{ t('缺考') }}</ElTag>
                       <div v-else class="score-cell">
                         <strong>{{ money(detailFor(row, subject.id).score) }}</strong>
                         <span class="score-sub">
-                          第 {{ detailFor(row, subject.id).rank }} 名 · {{ detailFor(row, subject.id).grade }}
+                          {{ t('第 {0} 名 · {1}', detailFor(row, subject.id).rank, detailFor(row, subject.id).grade) }}
                         </span>
                       </div>
                     </template>
-                    <span v-else class="unentered">未录入</span>
+                    <span v-else class="unentered">{{ t('未录入') }}</span>
                   </template>
                 </ElTableColumn>
 
-                <ElTableColumn label="总分" width="88">
+                <ElTableColumn :label="t('总分')" width="88">
                   <template #default="{ row }">
                     <strong>{{ money(row.total_score) }}</strong>
                   </template>
                 </ElTableColumn>
-                <ElTableColumn label="排名" width="76">
+                <ElTableColumn :label="t('排名')" width="76">
                   <template #default="{ row }">{{ row.total_rank ?? '—' }}</template>
                 </ElTableColumn>
-                <ElTableColumn label="等级" width="76">
+                <ElTableColumn :label="t('等级')" width="76">
                   <template #default="{ row }">
                     <ElTag v-if="row.total_grade" :type="gradeTagType(row.total_grade)" size="small" effect="dark">
                       {{ row.total_grade }}
@@ -676,11 +688,11 @@ onMounted(() =>
                     <span v-else>—</span>
                   </template>
                 </ElTableColumn>
-                <ElTableColumn prop="remark" label="备注" min-width="120" show-overflow-tooltip />
-                <ElTableColumn label="操作" width="140" fixed="right">
+                <ElTableColumn prop="remark" :label="t('备注')" min-width="120" show-overflow-tooltip />
+                <ElTableColumn :label="t('操作')" width="140" fixed="right">
                   <template #default="{ row }">
                     <ElButton link type="primary" :disabled="saving || !row.active" @click="editScore(row)">
-                      {{ row.details.length ? '修改' : '录分' }}
+                      {{ row.details.length ? t('修改') : t('录分') }}
                     </ElButton>
                     <ElButton
                       v-if="row.details.length || row.remark"
@@ -689,43 +701,43 @@ onMounted(() =>
                       :disabled="saving"
                       @click="removeScore(row)"
                     >
-                      删除
+                      {{ t('删除') }}
                     </ElButton>
                   </template>
                 </ElTableColumn>
               </ElTable>
             </template>
-            <ElEmpty v-else description="当前班级还没有考试，点击上方「新建考试」开始录入成绩" />
+            <ElEmpty v-else :description="t('当前班级还没有考试，点击上方「新建考试」开始录入成绩')" />
           </ElTabPane>
 
-          <ElTabPane label="导入与导出" name="io">
+          <ElTabPane :label="t('导入与导出')" name="io">
             <template v-if="activeExam">
               <div class="io-grid">
                 <div class="io-card">
-                  <h3>批量导入成绩（.xlsx）</h3>
+                  <h3>{{ t('批量导入成绩（.xlsx）') }}</h3>
                   <p class="form-hint">
-                    支持原版成绩表表头，学号请保留文本格式。空白单元格保留原成绩，填写「缺考」或「清空」可修改状态。导入先预检，存在错误时整批不写入。
+                    {{ t('支持原版成绩表表头，学号请保留文本格式。空白单元格保留原成绩，填写「缺考」或「清空」可修改状态。导入先预检，存在错误时整批不写入。') }}
                   </p>
                   <div class="io-controls">
                     <ElCheckbox v-model="updateExisting" :disabled="saving" @change="preview = null">
-                      按学号更新已有成绩
+                      {{ t('按学号更新已有成绩') }}
                     </ElCheckbox>
                     <input ref="fileInput" type="file" accept=".xlsx" class="hidden-file-input" @change="readFile" />
                     <ElButton type="primary" :icon="Upload" :loading="saving" @click="triggerFilePick">
-                      选择 Excel 成绩文件并预检
+                      {{ t('选择 Excel 成绩文件并预检') }}
                     </ElButton>
                   </div>
                 </div>
 
                 <div class="io-card">
-                  <h3>下载模板与导出成绩</h3>
-                  <p class="form-hint">可下载当前考试对应科目的导入模板，或导出包含总分、排名与等级的成绩表。</p>
+                  <h3>{{ t('下载模板与导出成绩') }}</h3>
+                  <p class="form-hint">{{ t('可下载当前考试对应科目的导入模板，或导出包含总分、排名与等级的成绩表。') }}</p>
                   <div class="io-controls">
-                    <ElCheckbox v-model="exportByStudentNo" :disabled="saving">按学号排序导出</ElCheckbox>
+                    <ElCheckbox v-model="exportByStudentNo" :disabled="saving">{{ t('按学号排序导出') }}</ElCheckbox>
                     <div class="action-group">
-                      <ElButton :icon="Download" :disabled="saving" @click="download(false)">下载成绩模板</ElButton>
+                      <ElButton :icon="Download" :disabled="saving" @click="download(false)">{{ t('下载成绩模板') }}</ElButton>
                       <ElButton type="primary" plain :icon="Download" :disabled="saving" @click="download(true)">
-                        导出当前考试成绩
+                        {{ t('导出当前考试成绩') }}
                       </ElButton>
                     </div>
                   </div>
@@ -734,57 +746,59 @@ onMounted(() =>
 
               <div v-if="preview" class="preview-box">
                 <div class="preview-head">
-                  <h3>导入预检结果</h3>
+                  <h3>{{ t('导入预检结果') }}</h3>
                   <div class="action-group">
-                    <ElTag type="success" effect="light">新增 {{ preview.additions }}</ElTag>
-                    <ElTag type="primary" effect="light">覆盖 {{ preview.replacements }}</ElTag>
-                    <ElTag type="warning" effect="light">清空 {{ preview.clears }}</ElTag>
-                    <ElTag type="info" effect="light">备注 {{ preview.remarks.length }}</ElTag>
+                    <ElTag type="success" effect="light">{{ t('新增') }} {{ preview.additions }}</ElTag>
+                    <ElTag type="primary" effect="light">{{ t('覆盖') }} {{ preview.replacements }}</ElTag>
+                    <ElTag type="warning" effect="light">{{ t('清空') }} {{ preview.clears }}</ElTag>
+                    <ElTag type="info" effect="light">{{ t('备注') }} {{ preview.remarks.length }}</ElTag>
                     <ElTag :type="preview.errors.length ? 'danger' : 'success'" effect="dark">
-                      错误 {{ preview.errors.length }}
+                      {{ t('错误') }} {{ preview.errors.length }}
                     </ElTag>
                   </div>
                 </div>
-                <ElAlert v-if="preview.errors.length" type="error" show-icon :closable="false" title="存在以下错误，修复后请重新选择文件">
+                <ElAlert v-if="preview.errors.length" type="error" show-icon :closable="false" :title="t('存在以下错误，修复后请重新选择文件')">
                   <ul class="error-list">
-                    <li v-for="(error, index) in preview.errors" :key="index">{{ error }}</li>
+                    <li v-for="(error, index) in preview.errors" :key="index">{{ localizeMessage(error) }}</li>
                   </ul>
                 </ElAlert>
                 <div class="drawer-footer" style="margin-top: 14px">
-                  <ElButton :disabled="saving" @click="preview = null">取消</ElButton>
+                  <ElButton :disabled="saving" @click="preview = null">{{ t('取消') }}</ElButton>
                   <ElButton type="primary" :loading="saving" :disabled="preview.errors.length > 0" @click="importPreview">
-                    确认导入（{{ preview.changes.length }} 项变更）
+                    {{ t('确认导入（') }}{{ preview.changes.length }} {{ t('项变更）') }}
                   </ElButton>
                 </div>
               </div>
             </template>
-            <ElEmpty v-else description="请先选择或新建一场考试" />
+            <ElEmpty v-else :description="t('请先选择或新建一场考试')" />
           </ElTabPane>
 
-          <ElTabPane :label="`科目模板 (${templates.length})`" name="templates">
+          <ElTabPane :label="t('科目模板 ({0})', templates.length)" name="templates">
             <div class="action-bar">
-              <ElButton type="primary" :icon="Plus" :disabled="saving" @click="editTemplate()">新增科目模板</ElButton>
-              <span class="form-hint">新建考试时会按班级的学段和年级自动匹配对应科目的默认满分。</span>
+              <ElButton type="primary" :icon="Plus" :disabled="saving" @click="editTemplate()">{{ t('新增科目模板') }}</ElButton>
+              <span class="form-hint">{{ t('新建考试时会按班级的学段和年级自动匹配对应科目的默认满分。') }}</span>
             </div>
-            <ElTable :data="templates" border empty-text="暂无科目模板">
-              <ElTableColumn prop="name" label="科目名称" min-width="140" />
-              <ElTableColumn label="适用学段" width="120">
-                <template #default="{ row }">{{ row.school_stage || '不限' }}</template>
+            <ElTable :data="templates" border :empty-text="t('暂无科目模板')">
+              <ElTableColumn :label="t('科目名称')" min-width="140">
+                <template #default="{ row }">{{ subjectLabel(row.name) }}</template>
               </ElTableColumn>
-              <ElTableColumn label="适用年级" width="130">
-                <template #default="{ row }">{{ row.grade || '不限' }}</template>
+              <ElTableColumn :label="t('适用学段')" width="120">
+                <template #default="{ row }">{{ t(row.school_stage || '不限') }}</template>
               </ElTableColumn>
-              <ElTableColumn label="默认满分" width="110">
+              <ElTableColumn :label="t('适用年级')" width="130">
+                <template #default="{ row }">{{ t(row.grade || '不限') }}</template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('默认满分')" width="110">
                 <template #default="{ row }">{{ money(row.full_score) }}</template>
               </ElTableColumn>
-              <ElTableColumn label="状态" width="90">
+              <ElTableColumn :label="t('状态')" width="90">
                 <template #default="{ row }">
-                  <ElTag :type="row.active ? 'success' : 'info'" size="small">{{ row.active ? '正常' : '停用' }}</ElTag>
+                  <ElTag :type="row.active ? 'success' : 'info'" size="small">{{ row.active ? t('正常') : t('停用') }}</ElTag>
                 </template>
               </ElTableColumn>
-              <ElTableColumn label="操作" width="100" fixed="right">
+              <ElTableColumn :label="t('操作')" width="100" fixed="right">
                 <template #default="{ row }">
-                  <ElButton link type="primary" :disabled="saving" @click="editTemplate(row)">编辑</ElButton>
+                  <ElButton link type="primary" :disabled="saving" @click="editTemplate(row)">{{ t('编辑') }}</ElButton>
                 </template>
               </ElTableColumn>
             </ElTable>
@@ -796,43 +810,44 @@ onMounted(() =>
     <!-- 单人录分抽屉（回显原分 + 快捷缺考/清空 + 保存并下一位） -->
     <ElDrawer
       :model-value="!!scoreDraft"
-      :title="scoreDraft ? `录入成绩 · ${scoreDraft.name}（${scoreDraft.student_no}）` : '录入成绩'"
+      :title="scoreDraft ? t('录入成绩 · {0}（{1}）', scoreDraft.name, scoreDraft.student_no) : t('录入成绩')"
       size="min(92vw, 520px)"
       :before-close="closeDrawer"
     >
       <div v-if="scoreDraft && activeExam" class="drawer-form">
-        <p class="form-hint">已回显当前已有分数。仅提交改动科目；清空输入框或点击「清空」可删除该科成绩。</p>
+        <p class="form-hint">{{ t('已回显当前已有分数。仅提交改动科目；清空输入框或点击「清空」可删除该科成绩。') }}</p>
         <div v-for="subject in activeExam.subjects" :key="subject.id" class="subject-score-row">
           <div class="subject-meta">
-            <strong>{{ subject.name }}</strong>
-            <span class="form-hint">满分 {{ money(subject.full_score) }}</span>
+            <strong>{{ subjectLabel(subject.name) }}</strong>
+            <span class="form-hint">{{ t('满分') }} {{ money(subject.full_score) }}</span>
           </div>
           <div class="subject-input-group">
             <ElInput
-              v-model="scoreDraft.values[subject.id]"
-              placeholder="输入分数、缺考或留空清空"
+              :model-value="scoreDraft.values[subject.id] === '缺考' ? t('缺考') : scoreDraft.values[subject.id]"
+              :placeholder="t('输入分数、缺考或留空清空')"
               :disabled="saving"
               style="flex: 1"
+              @update:model-value="updateScoreInput(subject.id, $event)"
             />
-            <ElButton size="small" plain :disabled="saving" @click="scoreDraft.values[subject.id] = '缺考'">缺考</ElButton>
-            <ElButton size="small" plain :disabled="saving" @click="scoreDraft.values[subject.id] = ''">清空</ElButton>
+            <ElButton size="small" plain :disabled="saving" @click="scoreDraft.values[subject.id] = '缺考'">{{ t('缺考') }}</ElButton>
+            <ElButton size="small" plain :disabled="saving" @click="scoreDraft.values[subject.id] = ''">{{ t('清空') }}</ElButton>
           </div>
         </div>
         <div class="form-field">
-          <span class="form-label">考试备注</span>
-          <ElInput v-model="scoreDraft.remark" maxlength="500" :disabled="saving" placeholder="可选备注" />
+          <span class="form-label">{{ t('考试备注') }}</span>
+          <ElInput v-model="scoreDraft.remark" maxlength="500" :disabled="saving" :placeholder="t('可选备注')" />
         </div>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">{{ t('取消') }}</ElButton>
           <template v-if="nextActiveStudentRow">
-            <ElButton :loading="saving" @click="saveScore(false)">仅保存</ElButton>
+            <ElButton :loading="saving" @click="saveScore(false)">{{ t('仅保存') }}</ElButton>
             <ElButton type="primary" :loading="saving" @click="saveScore(true)">
-              保存并录入下一位（{{ nextActiveStudentRow.name }}）
+              {{ t('保存并录入下一位（{0}）', nextActiveStudentRow.name) }}
             </ElButton>
           </template>
-          <ElButton v-else type="primary" :loading="saving" @click="saveScore(false)">保存成绩</ElButton>
+          <ElButton v-else type="primary" :loading="saving" @click="saveScore(false)">{{ t('保存成绩') }}</ElButton>
         </div>
       </template>
     </ElDrawer>
@@ -840,37 +855,37 @@ onMounted(() =>
     <!-- 新建／编辑考试抽屉 -->
     <ElDrawer
       :model-value="!!editor"
-      :title="editor?.id ? '编辑考试' : '新建考试'"
+      :title="editor?.id ? t('编辑考试') : t('新建考试')"
       size="min(94vw, 660px)"
       :before-close="closeDrawer"
     >
       <div v-if="editor" class="drawer-form">
-        <p class="required-legend"><span>*</span> 为必填项</p>
+        <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
         <div class="form-grid-2">
           <div class="form-field" :class="{ 'is-error': !!examErrors.name }">
-            <span class="form-label is-required">考试名称</span>
+            <span class="form-label is-required">{{ t('考试名称') }}</span>
             <ElInput
               v-model="editor.name"
               :disabled="saving"
-              placeholder="请输入考试名称，例如：2026 秋季期中考试"
+              :placeholder="t('请输入考试名称，例如：2026 秋季期中考试')"
               @input="clearExamError('name')"
             />
-            <p v-if="examErrors.name" class="form-error">{{ examErrors.name }}</p>
+            <p v-if="examErrors.name" class="form-error">{{ localizeMessage(examErrors.name) }}</p>
           </div>
           <div class="form-field">
-            <span class="form-label">考试日期<span class="form-label-note">选填</span></span>
+            <span class="form-label">{{ t('考试日期') }}<span class="form-label-note">{{ t('选填') }}</span></span>
             <ElInput v-model="editor.exam_date" type="date" :disabled="saving" />
           </div>
           <div class="form-field full-span">
-            <span class="form-label">备注<span class="form-label-note">选填</span></span>
-            <ElInput v-model="editor.remark" :disabled="saving" placeholder="选填说明" />
+            <span class="form-label">{{ t('备注') }}<span class="form-label-note">{{ t('选填') }}</span></span>
+            <ElInput v-model="editor.remark" :disabled="saving" :placeholder="t('选填说明')" />
           </div>
         </div>
 
         <div class="inline-switches">
-          <ElCheckbox v-model="editor.is_current" :disabled="saving">设为本班当前考试</ElCheckbox>
+          <ElCheckbox v-model="editor.is_current" :disabled="saving">{{ t('设为本班当前考试') }}</ElCheckbox>
           <ElCheckbox v-if="editor.id && !activeExam?.rank_grading" v-model="editor.rank_grading" :disabled="saving" @change="clearExamError('thresholds')">
-            改用按班级排名四档分级（A／B／C／D）
+            {{ t('改用按班级排名四档分级（A／B／C／D）') }}
           </ElCheckbox>
         </div>
 
@@ -879,13 +894,13 @@ onMounted(() =>
           type="info"
           show-icon
           :closable="false"
-          title="总成绩将按班级总排名平均划分为 A、B、C、D 四档。"
+          :title="t('总成绩将按班级总排名平均划分为 A、B、C、D 四档。')"
         />
         <div v-else class="threshold-box" :class="{ 'is-field-error': !!examErrors.thresholds }">
-          <span class="form-label is-required">等级得分率下限<span class="form-label-note">按 A、B、C、D 严格递减填写，单位 %</span></span>
+          <span class="form-label is-required">{{ t('等级得分率下限') }}<span class="form-label-note">{{ t('按 A、B、C、D 严格递减填写，单位 %') }}</span></span>
           <div class="threshold-grid">
             <div v-for="(_, index) in editor.thresholds" :key="index" class="form-field">
-              <span class="form-hint">{{ ['A', 'B', 'C', 'D'][index] }} 档下限</span>
+              <span class="form-hint">{{ ['A', 'B', 'C', 'D'][index] }} {{ t('档下限') }}</span>
               <ElInputNumber
                 v-model="editor.thresholds[index]"
                 :min="0"
@@ -896,21 +911,21 @@ onMounted(() =>
               />
             </div>
           </div>
-          <p v-if="examErrors.thresholds" class="form-error">{{ examErrors.thresholds }}</p>
+          <p v-if="examErrors.thresholds" class="form-error">{{ localizeMessage(examErrors.thresholds) }}</p>
         </div>
 
         <div class="subjects-section">
           <div class="subjects-head">
             <div>
-              <span class="form-label is-required">考试科目快照<span class="form-label-note">至少 1 门科目</span></span>
-              <p class="form-hint">创建后科目与满分将锁定为快照，防止历史成绩漂移。</p>
+              <span class="form-label is-required">{{ t('考试科目快照') }}<span class="form-label-note">{{ t('至少 1 门科目') }}</span></span>
+              <p class="form-hint">{{ t('创建后科目与满分将锁定为快照，防止历史成绩漂移。') }}</p>
             </div>
             <ElButton v-if="!editor.id" size="small" type="primary" plain :icon="Plus" @click="addSubject(); clearExamError('subjects')">
-              新增空白科目
+              {{ t('新增空白科目') }}
             </ElButton>
           </div>
           <div v-if="!editor.id && templates.some(t => t.active)" class="template-chips">
-            <span class="form-hint">快捷添加模板：</span>
+            <span class="form-hint">{{ t('快捷添加模板：') }}</span>
             <ElButton
               v-for="item in templates.filter(t => t.active)"
               :key="item.id"
@@ -918,16 +933,16 @@ onMounted(() =>
               round
               @click="addSubject(item); clearExamError('subjects')"
             >
-              + {{ item.name }} ({{ money(item.full_score) }})
+              + {{ subjectLabel(item.name) }} ({{ money(item.full_score) }})
             </ElButton>
           </div>
 
-          <p v-if="examErrors.subjects" class="form-error">{{ examErrors.subjects }}</p>
+          <p v-if="examErrors.subjects" class="form-error">{{ localizeMessage(examErrors.subjects) }}</p>
           <div class="subject-rows">
             <div class="subject-row-head">
-              <span class="form-label is-required">科目名称</span>
-              <span class="form-label is-required">满分</span>
-              <span>计入总分</span>
+              <span class="form-label is-required">{{ t('科目名称') }}</span>
+              <span class="form-label is-required">{{ t('满分') }}</span>
+              <span>{{ t('计入总分') }}</span>
               <span></span>
             </div>
             <div v-for="(subject, index) in editor.subjects" :key="index" class="subject-row-block">
@@ -937,7 +952,7 @@ onMounted(() =>
                   size="small"
                   :disabled="!!editor.id"
                   :class="{ 'is-field-error': !!examErrors[`subject_name_${index}`] }"
-                  placeholder="请输入科目名称"
+                  :placeholder="t('请输入科目名称')"
                   @input="clearExamError(`subject_name_${index}`)"
                 />
                 <ElInput
@@ -945,14 +960,14 @@ onMounted(() =>
                   size="small"
                   :disabled="!!editor.id"
                   :class="{ 'is-field-error': !!examErrors[`subject_full_${index}`] }"
-                  placeholder="请输入满分"
+                  :placeholder="t('请输入满分')"
                   @input="clearExamError(`subject_full_${index}`)"
                 />
                 <ElSwitch v-model="subject.counts_toward_total" size="small" :disabled="!!editor.id" />
-                <ElButton v-if="!editor.id" link type="danger" size="small" @click="editor.subjects.splice(index, 1); examErrors = {}">移除</ElButton>
+                <ElButton v-if="!editor.id" link type="danger" size="small" @click="editor.subjects.splice(index, 1); examErrors = {}">{{ t('移除') }}</ElButton>
               </div>
               <p v-if="examErrors[`subject_name_${index}`] || examErrors[`subject_full_${index}`]" class="form-error">
-                {{ [examErrors[`subject_name_${index}`], examErrors[`subject_full_${index}`]].filter(Boolean).join('；') }}
+                {{ [examErrors[`subject_name_${index}`], examErrors[`subject_full_${index}`]].filter(Boolean).map(localizeMessage).join(t('；')) }}
               </p>
             </div>
           </div>
@@ -960,8 +975,8 @@ onMounted(() =>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
-          <ElButton type="primary" :loading="saving" @click="saveExam">保存考试</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">{{ t('取消') }}</ElButton>
+          <ElButton type="primary" :loading="saving" @click="saveExam">{{ t('保存考试') }}</ElButton>
         </div>
       </template>
     </ElDrawer>
@@ -969,41 +984,41 @@ onMounted(() =>
     <!-- 科目模板抽屉 -->
     <ElDrawer
       :model-value="!!templateEditor"
-      :title="templateEditor?.id ? '编辑科目模板' : '新增科目模板'"
+      :title="templateEditor?.id ? t('编辑科目模板') : t('新增科目模板')"
       size="min(92vw, 480px)"
       :before-close="closeDrawer"
     >
       <div v-if="templateEditor" class="drawer-form">
-        <p class="required-legend"><span>*</span> 为必填项</p>
+        <p class="required-legend"><span>*</span> {{ t('为必填项') }}</p>
         <div class="form-field" :class="{ 'is-error': !!templateErrors.name }">
-          <span class="form-label is-required">科目名称</span>
+          <span class="form-label is-required">{{ t('科目名称') }}</span>
           <ElSelect
             v-model="templateEditor.name"
             filterable
             allow-create
             default-first-option
-            placeholder="请选择或输入科目名称"
+            :placeholder="t('请选择或输入科目名称')"
             @change="clearTemplateError('name')"
           >
-            <ElOption v-for="item in classSubjects" :key="item" :label="item" :value="item" />
+            <ElOption v-for="item in classSubjects" :key="item" :label="subjectLabel(item)" :value="item" />
             <ElOption
               v-if="originalTemplate?.name && !classSubjects.includes(originalTemplate.name)"
               :label="originalTemplate.name"
               :value="originalTemplate.name"
             />
           </ElSelect>
-          <p v-if="templateErrors.name" class="form-error">{{ templateErrors.name }}</p>
+          <p v-if="templateErrors.name" class="form-error">{{ localizeMessage(templateErrors.name) }}</p>
         </div>
         <div class="form-field">
-          <span class="form-label">适用年级<span class="form-label-note">选填</span></span>
+          <span class="form-label">{{ t('适用年级') }}<span class="form-label-note">{{ t('选填') }}</span></span>
           <ElSelect
             v-model="templateEditor.grade"
             clearable
-            placeholder="不限年级"
+            :placeholder="t('不限年级')"
             @change="templateEditor.school_stage = classGrades.find(item => item.name === templateEditor.grade)?.stage ?? ''"
           >
-            <ElOption label="不限年级" value="" />
-            <ElOption v-for="item in classGrades" :key="item.name" :label="item.name" :value="item.name" />
+            <ElOption :label="t('不限年级')" value="" />
+            <ElOption v-for="item in classGrades" :key="item.name" :label="t(item.name)" :value="item.name" />
             <ElOption
               v-if="originalTemplate?.grade && !classGrades.some(item => item.name === originalTemplate.grade)"
               :label="originalTemplate.grade"
@@ -1012,12 +1027,12 @@ onMounted(() =>
           </ElSelect>
         </div>
         <div class="form-field">
-          <span class="form-label">适用学段<span class="form-label-note">选填</span></span>
-          <ElSelect v-model="templateEditor.school_stage" :disabled="!!templateEditor.grade" placeholder="不限学段">
-            <ElOption label="不限学段" value="" />
-            <ElOption label="小学" value="小学" />
-            <ElOption label="初中" value="初中" />
-            <ElOption label="高中" value="高中" />
+          <span class="form-label">{{ t('适用学段') }}<span class="form-label-note">{{ t('选填') }}</span></span>
+          <ElSelect v-model="templateEditor.school_stage" :disabled="!!templateEditor.grade" :placeholder="t('不限学段')">
+            <ElOption :label="t('不限学段')" value="" />
+            <ElOption :label="t('小学')" value="小学" />
+            <ElOption :label="t('初中')" value="初中" />
+            <ElOption :label="t('高中')" value="高中" />
             <ElOption
               v-if="originalTemplate?.school_stage && !['小学', '初中', '高中'].includes(originalTemplate.school_stage)"
               :label="originalTemplate.school_stage"
@@ -1026,23 +1041,23 @@ onMounted(() =>
           </ElSelect>
         </div>
         <div class="form-field" :class="{ 'is-error': !!templateErrors.display_full }">
-          <span class="form-label is-required">默认满分</span>
+          <span class="form-label is-required">{{ t('默认满分') }}</span>
           <ElInput
             v-model="templateEditor.display_full"
-            placeholder="请输入大于 0 的满分，例如：150"
+            :placeholder="t('请输入大于 0 的满分，例如：150')"
             @input="clearTemplateError('display_full')"
           />
-          <p v-if="templateErrors.display_full" class="form-error">{{ templateErrors.display_full }}</p>
+          <p v-if="templateErrors.display_full" class="form-error">{{ localizeMessage(templateErrors.display_full) }}</p>
         </div>
         <div class="form-field">
-          <span class="form-label">状态</span>
-          <ElSwitch v-model="templateEditor.active" active-text="正常" inactive-text="停用" />
+          <span class="form-label">{{ t('状态') }}</span>
+          <ElSwitch v-model="templateEditor.active" :active-text="t('正常')" :inactive-text="t('停用')" />
         </div>
       </div>
       <template #footer>
         <div class="drawer-footer">
-          <ElButton :disabled="saving" @click="closeDrawer()">取消</ElButton>
-          <ElButton type="primary" :loading="saving" @click="saveTemplate">保存模板</ElButton>
+          <ElButton :disabled="saving" @click="closeDrawer()">{{ t('取消') }}</ElButton>
+          <ElButton type="primary" :loading="saving" @click="saveTemplate">{{ t('保存模板') }}</ElButton>
         </div>
       </template>
     </ElDrawer>
